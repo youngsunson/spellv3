@@ -58,3 +58,11 @@ export const analyzeText = async (
   
   return parseAIResponse(raw);
 };
+// src/utils/api.ts - Model options আপডেট করুন
+
+// Settings Modal এ model options
+<select value={selectedModel} onChange={e => setSelectedModel(e.target.value)}>
+  <option value="gemini-2.5-flash">Gemini 2.5 Flash (সেরা মান)</option>
+  <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite (দ্রুত)</option>
+  <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+</select>
