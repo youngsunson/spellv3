@@ -1,9 +1,10 @@
 // src/App.tsx
 import { useState, useCallback, useRef } from 'react';
 
-// ============ IMPORTS FROM UTILS ============
+// ============ IMPORTS ============
 import { normalize } from './utils/normalize';
-import { callGeminiJson } from './utils/api';
+import { analyzeText } from './utils/api';
+import { UnifiedResponse } from './utils/toonParser';
 import {
   getTextFromWord,
   highlightMultipleInWord,
@@ -12,11 +13,7 @@ import {
   clearHighlights
 } from './utils/word';
 
-// ============ IMPORTS FROM PROMPTS ============
-import { buildTonePrompt, getToneName } from './prompts/tone';
-import { buildStylePrompt } from './prompts/style';
 import {
-  buildMainPrompt,
   DOC_TYPE_CONFIG,
   getDocTypeLabel,
   DocType
@@ -82,6 +79,21 @@ export interface ContentAnalysis {
 type SectionKey = 'spelling' | 'tone' | 'style' | 'mixing' | 'punctuation' | 'euphony' | 'content';
 type ViewFilter = 'all' | 'spelling' | 'punctuation';
 
+// Tone name helper
+const getToneName = (tone: string): string => {
+  const map: Record<string, string> = {
+    'formal': '📋 আনুষ্ঠানিক',
+    'informal': '💬 অনানুষ্ঠানিক',
+    'professional': '💼 পেশাদার',
+    'friendly': '😊 বন্ধুত্বপূর্ণ',
+    'respectful': '🙏 সম্মানজনক',
+    'persuasive': '💪 প্রভাবশালী',
+    'neutral': '⚖️ নিরপেক্ষ',
+    'academic': '📚 শিক্ষামূলক'
+  };
+  return map[tone] || tone;
+};
+
 // ============ MAIN COMPONENT ============
 function App() {
   // Settings State
@@ -127,7 +139,7 @@ function App() {
 
   const [stats, setStats] = useState({ totalWords: 0, errorCount: 0, accuracy: 100 });
 
-  // Debounce ref for highlight - ব্রাউজার compatible টাইপ
+  // Debounce ref for highlight
   const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ============ HELPERS ============
@@ -135,8 +147,6 @@ function App() {
     setMessage({ text, type });
     setTimeout(() => setMessage(null), 4000);
   }, []);
-
-  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
   const saveSettings = useCallback(() => {
     localStorage.setItem('gemini_api_key', apiKey);
@@ -152,12 +162,9 @@ function App() {
 
   // ============ DEBOUNCED HIGHLIGHT ============
   const handleHighlight = useCallback((text: string, color: string, position?: number) => {
-    // Cancel previous timeout
     if (highlightTimeoutRef.current) {
       clearTimeout(highlightTimeoutRef.current);
     }
-
-    // Debounce highlight - 300ms পরে হাইলাইট করবে
     highlightTimeoutRef.current = setTimeout(() => {
       highlightInWord(text, color, position);
     }, 300);
@@ -223,35 +230,38 @@ function App() {
     }
   }, []);
 
-  // ============ BATCH HIGHLIGHT (ALL AT ONCE) ============
-  const batchHighlightAll = useCallback(async (
-    spellingErrors: Correction[],
-    toneItems: ToneSuggestion[],
-    styleItems: StyleSuggestion[]
-  ) => {
+  // ============ BATCH HIGHLIGHT ============
+  const batchHighlightAll = useCallback(async (result: UnifiedResponse) => {
     const items: Array<{ text: string; color: string; position?: number }> = [];
 
     // Spelling errors - red
-    spellingErrors.forEach(err => {
+    result.spellingErrors.forEach(err => {
       items.push({ text: err.wrong, color: '#fee2e2', position: err.position });
     });
 
     // Tone - yellow
-    toneItems.forEach(t => {
+    result.toneConversions.forEach(t => {
       items.push({ text: t.current, color: '#fef3c7', position: t.position });
     });
 
     // Style - teal
-    styleItems.forEach(s => {
+    result.styleConversions.forEach(s => {
       items.push({ text: s.current, color: '#ccfbf1', position: s.position });
     });
+
+    // Mixing - purple
+    if (result.languageStyleMixing?.corrections) {
+      result.languageStyleMixing.corrections.forEach(c => {
+        items.push({ text: c.current, color: '#e9d5ff', position: c.position });
+      });
+    }
 
     if (items.length > 0) {
       await highlightMultipleInWord(items);
     }
   }, []);
 
-  // ============ API LOGIC ============
+  // ============ MAIN API CALL - একটি মাত্র request ============
   const checkSpelling = useCallback(async () => {
     if (!apiKey) {
       showMessage('অনুগ্রহ করে প্রথমে API Key দিন', 'error');
@@ -266,9 +276,9 @@ function App() {
     }
 
     setIsLoading(true);
-    setLoadingText('বিশ্লেষণ করা হচ্ছে...');
+    setLoadingText('বি��্লেষণ করা হচ্ছে...');
 
-    // Reset states
+    // Reset all states
     setCorrections([]);
     setToneSuggestions([]);
     setStyleSuggestions([]);
@@ -280,184 +290,70 @@ function App() {
 
     await clearHighlights();
 
-    let allSpelling: Correction[] = [];
-    let allTone: ToneSuggestion[] = [];
-    let allStyle: StyleSuggestion[] = [];
-
     try {
-      // 1. Main Check
-      setLoadingText('বানান ও ব্যাকরণ দেখা হচ্ছে...');
-      const mainResult = await performMainCheck(text);
-      if (mainResult) {
-        allSpelling = mainResult.spelling;
-      }
-      await delay(1500);
+      // ✅ একটি মাত্র API call!
+      const result = await analyzeText(
+        {
+          text,
+          docType,
+          style: selectedStyle,
+          tone: selectedTone
+        },
+        apiKey,
+        selectedModel
+      );
 
-      // 2. Tone Check
-      if (selectedTone) {
-        setLoadingText('টোন বিশ্লেষণ হচ্ছে...');
-        const toneResult = await performToneCheck(text);
-        if (toneResult) {
-          allTone = toneResult;
+      if (!result) {
+        showMessage('বিশ্লেষণ ব্যর্থ হয়েছে। আবার চেষ্টা করুন।', 'error');
+        return;
+      }
+
+      // Sort by position
+      const sortByPos = <T extends { position?: number }>(arr: T[]) =>
+        arr.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+
+      // Set states
+      setCorrections(sortByPos([...result.spellingErrors]));
+      setPunctuationIssues(sortByPos([...result.punctuationIssues]));
+      setEuphonyImprovements(sortByPos([...result.euphonyImprovements]));
+      setToneSuggestions(sortByPos([...result.toneConversions]));
+      setStyleSuggestions(sortByPos([...result.styleConversions]));
+
+      if (result.languageStyleMixing?.detected) {
+        const mixing = { ...result.languageStyleMixing };
+        if (mixing.corrections) {
+          mixing.corrections = sortByPos([...mixing.corrections]);
         }
-        await delay(1500);
+        setLanguageStyleMixing(mixing);
       }
 
-      // 3. Style Check
-      if (selectedStyle !== 'none') {
-        setLoadingText('ভাষারীতি বিশ্লেষণ হচ্ছে...');
-        const styleResult = await performStyleCheck(text);
-        if (styleResult) {
-          allStyle = styleResult;
-        }
-        await delay(1500);
+      if (result.contentAnalysis) {
+        setContentAnalysis(result.contentAnalysis);
       }
 
-      // 4. Content Analysis
-      setLoadingText('সারাংশ তৈরি হচ্ছে...');
-      await analyzeContent(text);
+      // Calculate stats
+      const words = text.trim().split(/\s+/).filter(Boolean).length;
+      const errors = result.spellingErrors.length;
+      setStats({
+        totalWords: words,
+        errorCount: errors,
+        accuracy: words > 0 ? Math.round(((words - errors) / words) * 100) : 100
+      });
 
-      // 5. BATCH Highlight - একবারে সব হাইলাইট
+      // Batch highlight
       setLoadingText('হাইলাইট করা হচ্ছে...');
-      await batchHighlightAll(allSpelling, allTone, allStyle);
+      await batchHighlightAll(result);
+
+      showMessage('বিশ্লেষণ সম্পন্ন! ✓', 'success');
 
     } catch (error: any) {
       console.error(error);
-      showMessage(
-        error?.message || 'ত্রুটি হয়েছে। API Key, Model বা নেটওয়ার্ক চেক করুন।',
-        'error'
-      );
+      showMessage(error?.message || 'ত্রুটি হয়েছে। আবার চেষ্টা করুন।', 'error');
     } finally {
       setIsLoading(false);
       setLoadingText('');
     }
   }, [apiKey, selectedModel, docType, selectedTone, selectedStyle, showMessage, batchHighlightAll]);
-
-  // ============ PERFORM MAIN CHECK ============
-  const performMainCheck = async (text: string): Promise<{ spelling: Correction[] } | null> => {
-    const prompt = buildMainPrompt(text, docType);
-    const result = await callGeminiJson(prompt, apiKey, selectedModel, { temperature: 0.1 });
-
-    if (!result) return null;
-
-    const allSpelling: Correction[] = (result.spellingErrors || []).map((e: any) => ({
-      ...e,
-      position: typeof e.position === 'number' ? e.position : undefined
-    }));
-
-    const allPunct: PunctuationIssue[] = (result.punctuationIssues || []).map((p: any) => ({
-      ...p,
-      position: typeof p.position === 'number' ? p.position : undefined
-    }));
-
-    const allEuphony: EuphonyImprovement[] = (result.euphonyImprovements || []).map((e: any) => ({
-      ...e,
-      position: typeof e.position === 'number' ? e.position : undefined
-    }));
-
-    let globalMixing: StyleMixing | null = result.languageStyleMixing || null;
-    if (globalMixing && globalMixing.corrections) {
-      globalMixing.corrections = globalMixing.corrections.map((c: any) => ({
-        ...c,
-        position: typeof c.position === 'number' ? c.position : undefined
-      }));
-    }
-
-    // Sort
-    allSpelling.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-    allPunct.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-    allEuphony.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-    if (globalMixing?.corrections) {
-      globalMixing.corrections.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-    }
-
-    setCorrections(allSpelling);
-    setPunctuationIssues(allPunct);
-    setEuphonyImprovements(allEuphony);
-    setLanguageStyleMixing(globalMixing);
-
-    const words = text.trim().length > 0 ? text.trim().split(/\s+/).filter(Boolean).length : 0;
-    const errors = allSpelling.length;
-
-    setStats({
-      totalWords: words,
-      errorCount: errors,
-      accuracy: words > 0 ? Math.round(((words - errors) / words) * 100) : 100
-    });
-
-    return { spelling: allSpelling };
-  };
-
-  // ============ PERFORM TONE CHECK ============
-  const performToneCheck = async (text: string): Promise<ToneSuggestion[] | null> => {
-    const prompt = buildTonePrompt(text, selectedTone);
-    const result = await callGeminiJson(
-      `${prompt}\n\nযদি কোন পরিবর্তন প্রয়োজন না হয় তাহলে "toneConversions": [] খালি array রাখবেন।`,
-      apiKey,
-      selectedModel,
-      { temperature: 0.2 }
-    );
-    if (!result) return null;
-
-    const toneConversions: ToneSuggestion[] = (result.toneConversions || []).map((t: any) => ({
-      ...t,
-      position: typeof t.position === 'number' ? t.position : undefined
-    }));
-
-    toneConversions.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-    setToneSuggestions(toneConversions);
-
-    return toneConversions;
-  };
-
-  // ============ PERFORM STYLE CHECK ============
-  const performStyleCheck = async (text: string): Promise<StyleSuggestion[] | null> => {
-    const prompt = buildStylePrompt(text, selectedStyle);
-    const result = await callGeminiJson(
-      `${prompt}\n\nযদি কোন পরিবর্তন প্রয়োজন না হয় তাহলে "styleConversions": [] খালি array রাখবেন।`,
-      apiKey,
-      selectedModel,
-      { temperature: 0.2 }
-    );
-    if (!result) return null;
-
-    const styleConversions: StyleSuggestion[] = (result.styleConversions || []).map((s: any) => ({
-      ...s,
-      position: typeof s.position === 'number' ? s.position : undefined
-    }));
-
-    styleConversions.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-    setStyleSuggestions(styleConversions);
-
-    return styleConversions;
-  };
-
-  // ============ ANALYZE CONTENT ============
-  const analyzeContent = async (text: string): Promise<void> => {
-    const cfg = DOC_TYPE_CONFIG[docType];
-    const prompt = `
-বাংলা লেখাটি খুব সংক্ষেপে বিশ্লেষণ করুন।
-
-ধরুন এটি: ${cfg.label}
-
-${cfg.contentHint}
-
-"""${text}"""
-
-Response format (ONLY valid JSON, no extra text):
-
-{
-  "contentType": "লেখার ধরন (১-২ শব্দ)",
-  "description": "খুব সংক্ষিপ্ত বর্ণনা (১ লাইন)",
-  "missingElements": ["গুরুত্বপূর্ণ ১-২টি জিনিস যা নেই"],
-  "suggestions": ["১টি প্রধান পরামর্শ"]
-}
-`;
-    const result = await callGeminiJson(prompt, apiKey, selectedModel, { temperature: 0.4 });
-    if (!result) return;
-
-    setContentAnalysis(result as ContentAnalysis);
-  };
 
   // ============ RENDER HELPERS ============
   const shouldShowSection = useCallback((key: SectionKey): boolean => {
@@ -492,7 +388,7 @@ Response format (ONLY valid JSON, no extra text):
         <div className="toolbar">
           <div className="toolbar-top">
             <button onClick={checkSpelling} disabled={isLoading} className="btn-check">
-              {isLoading ? '...' : '🔍 পরীক্ষা করুন'}
+              {isLoading ? '⏳ অপেক্ষা করুন...' : '🔍 পরীক্ষা করুন'}
             </button>
           </div>
 
@@ -953,7 +849,8 @@ Response format (ONLY valid JSON, no extra text):
       </div>
 
       {/* ============ MODALS ============ */}
-
+      {/* (বাকি সব modal আগের মতোই - কোনো পরিবর্তন নেই) */}
+      
       {/* Main Menu Modal */}
       {activeModal === 'mainMenu' && (
         <div className="modal-overlay" onClick={() => setActiveModal('none')}>
@@ -999,7 +896,7 @@ Response format (ONLY valid JSON, no extra text):
                 <div className="opt-icon">⚙️</div>
                 <div style={{ flex: 1 }}>
                   <div className="opt-title">সেটিংস</div>
-                  <div className="opt-desc">API Key, মডেল, ডিফল্ট ডক টাইপ</div>
+                  <div className="opt-desc">API Key, মডেল</div>
                 </div>
               </div>
 
@@ -1034,7 +931,7 @@ Response format (ONLY valid JSON, no extra text):
 
               <label>🤖 AI Model</label>
               <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)}>
-                <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                <option value="gemini-2.5-flash">Gemini 2.5 Flash (রেকমেন্ডেড)</option>
                 <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
                 <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
               </select>
@@ -1081,21 +978,13 @@ Response format (ONLY valid JSON, no extra text):
             </div>
             <div className="modal-body">
               <ol style={{ paddingLeft: '18px', lineHeight: '2', fontSize: '13px' }}>
-                <li style={{ marginBottom: '10px' }}>⚙️ সেটিংস থেকে API Key দিন</li>
-                <li style={{ marginBottom: '10px' }}>
-                  📂 প্রয়োজন হলে ডক টাইপ নির্বাচন করুন
-                </li>
-                <li style={{ marginBottom: '10px' }}>
-                  ✍️ বাংলা টেক্সট সিলেক্ট করুন অথবা সম্পূর্ণ ডকুমেন্ট চেক করুন
-                </li>
-                <li style={{ marginBottom: '10px' }}>
-                  💬 <strong>টোন</strong> (মেনু থেকে) নির্বাচন করুন (ঐচ্ছিক)
-                </li>
-                <li style={{ marginBottom: '10px' }}>
-                  📝 <strong>ভাষারীতি</strong> (মেনু থেকে) নির্বাচন করুন (ঐচ্ছিক)
-                </li>
-                <li style={{ marginBottom: '10px' }}>🔍 "পরীক্ষা করুন" বাটনে ক্লিক করুন</li>
-                <li>✓ সাজেশনে ক্লিক করে প্রতিস্থাপন করুন</li>
+                <li>⚙️ সেটিংস থেকে API Key দিন</li>
+                <li>📂 ডক টাইপ নির্বাচন করুন (ঐচ্ছিক)</li>
+                <li>✍️ বাংলা টেক্সট সিলেক্ট করুন</li>
+                <li>💬 টোন নির্বাচন করুন (ঐচ্ছিক)</li>
+                <li>📝 ভাষারীতি নির্বাচন করুন (ঐচ্ছিক)</li>
+                <li>🔍 "পরীক্ষা করুন" ক্লিক করুন</li>
+                <li>✓ সাজেশনে ক্লিক করে সংশোধন করুন</li>
               </ol>
             </div>
           </div>
