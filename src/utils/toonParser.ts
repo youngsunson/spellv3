@@ -1,10 +1,6 @@
 // src/utils/toonParser.ts
-/**
- * TOON (Token-Oriented Object Notation) Parser
- * AI-friendly, কম টোকেন ব্যবহার করে, পার্সিং সহজ
- */
 
-export interface ParsedMainResponse {
+export interface UnifiedResponse {
   spellingErrors: Array<{
     wrong: string;
     suggestions: string[];
@@ -34,18 +30,12 @@ export interface ParsedMainResponse {
     reason: string;
     position: number;
   }>;
-}
-
-export interface ParsedStyleResponse {
   styleConversions: Array<{
     current: string;
     suggestion: string;
     type: string;
     position: number;
   }>;
-}
-
-export interface ParsedToneResponse {
   toneConversions: Array<{
     current: string;
     suggestion: string;
@@ -66,16 +56,19 @@ export const extractTextFromGeminiResponse = (data: any): string | null => {
 };
 
 /**
- * TOON থেকে Main Response পার্স করা
+ * Unified TOON Parser - সব sections একসাথে parse
  */
-export const parseMainToon = (raw: string): ParsedMainResponse => {
-  const result: ParsedMainResponse = {
+export const parseUnifiedToon = (raw: string): UnifiedResponse => {
+  const result: UnifiedResponse = {
     spellingErrors: [],
     languageStyleMixing: { detected: false },
     punctuationIssues: [],
-    euphonyImprovements: []
+    euphonyImprovements: [],
+    styleConversions: [],
+    toneConversions: []
   };
 
+  // @ দিয়ে sections আলাদা করা
   const sections = raw.split(/^@/m).filter(s => s.trim());
 
   for (const section of sections) {
@@ -85,16 +78,22 @@ export const parseMainToon = (raw: string): ParsedMainResponse => {
 
     switch (header) {
       case 'SPELLING':
-        result.spellingErrors = parseSpellingSection(content);
+        result.spellingErrors = parseSpellingLines(content);
         break;
       case 'MIXING':
-        result.languageStyleMixing = parseMixingSection(content);
+        result.languageStyleMixing = parseMixingLines(content);
         break;
       case 'PUNCTUATION':
-        result.punctuationIssues = parsePunctuationSection(content);
+        result.punctuationIssues = parsePunctuationLines(content);
         break;
       case 'EUPHONY':
-        result.euphonyImprovements = parseEuphonySection(content);
+        result.euphonyImprovements = parseEuphonyLines(content);
+        break;
+      case 'STYLE':
+        result.styleConversions = parseStyleLines(content);
+        break;
+      case 'TONE':
+        result.toneConversions = parseToneLines(content);
         break;
     }
   }
@@ -102,18 +101,13 @@ export const parseMainToon = (raw: string): ParsedMainResponse => {
   return result;
 };
 
-/**
- * Spelling section পার্স করা
- * Format: ভুল_শব্দ|সঠিক১,সঠিক২|position
- */
-const parseSpellingSection = (lines: string[]): ParsedMainResponse['spellingErrors'] => {
-  const errors: ParsedMainResponse['spellingErrors'] = [];
-  
+// ভুল|সঠিক১,সঠিক২|pos
+const parseSpellingLines = (lines: string[]) => {
+  const errors: UnifiedResponse['spellingErrors'] = [];
   for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    
-    const parts = trimmed.split('|');
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const parts = t.split('|');
     if (parts.length >= 3) {
       errors.push({
         wrong: parts[0].trim(),
@@ -122,35 +116,26 @@ const parseSpellingSection = (lines: string[]): ParsedMainResponse['spellingErro
       });
     }
   }
-  
   return errors;
 };
 
-/**
- * Mixing section পার্স করা
- * Format:
- * detected:true/false
- * style:চলিত/সাধু
- * reason:কারণ
- * @CORRECTIONS
- * বর্তমান|সংশোধন|টাইপ|position
- */
-const parseMixingSection = (lines: string[]): ParsedMainResponse['languageStyleMixing'] => {
-  const result: ParsedMainResponse['languageStyleMixing'] = { detected: false };
-  const corrections: ParsedMainResponse['languageStyleMixing']['corrections'] = [];
+// detected:true, style:চলিত, reason:..., @CORRECTIONS বর্তমান|সংশোধন|টাইপ|pos
+const parseMixingLines = (lines: string[]) => {
+  const result: UnifiedResponse['languageStyleMixing'] = { detected: false };
+  const corrections: NonNullable<UnifiedResponse['languageStyleMixing']['corrections']> = [];
   let inCorrections = false;
 
   for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
 
-    if (trimmed.toUpperCase() === 'CORRECTIONS' || trimmed.toUpperCase() === '@CORRECTIONS') {
+    if (t.toUpperCase() === 'CORRECTIONS' || t.toUpperCase() === '@CORRECTIONS') {
       inCorrections = true;
       continue;
     }
 
     if (inCorrections) {
-      const parts = trimmed.split('|');
+      const parts = t.split('|');
       if (parts.length >= 4) {
         corrections.push({
           current: parts[0].trim(),
@@ -160,120 +145,70 @@ const parseMixingSection = (lines: string[]): ParsedMainResponse['languageStyleM
         });
       }
     } else {
-      const [key, ...valueParts] = trimmed.split(':');
-      const value = valueParts.join(':').trim();
-      
-      switch (key.toLowerCase()) {
-        case 'detected':
-          result.detected = value.toLowerCase() === 'true' || value === '১' || value === 'হ্যাঁ';
-          break;
-        case 'style':
-          result.recommendedStyle = value;
-          break;
-        case 'reason':
-          result.reason = value;
-          break;
+      const idx = t.indexOf(':');
+      if (idx > 0) {
+        const key = t.substring(0, idx).toLowerCase();
+        const val = t.substring(idx + 1).trim();
+        if (key === 'detected') result.detected = val.toLowerCase() === 'true';
+        else if (key === 'style') result.recommendedStyle = val;
+        else if (key === 'reason') result.reason = val;
       }
     }
   }
 
-  if (corrections.length > 0) {
-    result.corrections = corrections;
-  }
-
+  if (corrections.length > 0) result.corrections = corrections;
   return result;
 };
 
-/**
- * Punctuation section পার্স করা
- * Format:
- * issue:সমস্যা
- * cur:বর্তমান বাক্য
- * fix:সংশোধিত বাক্য
- * exp:ব্যাখ্যা
- * pos:position
- * ---
- */
-const parsePunctuationSection = (lines: string[]): ParsedMainResponse['punctuationIssues'] => {
-  const issues: ParsedMainResponse['punctuationIssues'] = [];
-  let current: Partial<ParsedMainResponse['punctuationIssues'][0]> = {};
+// issue:, cur:, fix:, exp:, pos:, ---
+const parsePunctuationLines = (lines: string[]) => {
+  const issues: UnifiedResponse['punctuationIssues'] = [];
+  let current: Partial<UnifiedResponse['punctuationIssues'][0]> = {};
+
+  const pushCurrent = () => {
+    if (current.issue || current.currentSentence) {
+      issues.push({
+        issue: current.issue || '',
+        currentSentence: current.currentSentence || '',
+        correctedSentence: current.correctedSentence || current.currentSentence || '',
+        explanation: current.explanation || '',
+        position: current.position || 0
+      });
+      current = {};
+    }
+  };
 
   for (const line of lines) {
-    const trimmed = line.trim();
-    
-    if (trimmed === '---' || trimmed === '') {
-      if (current.issue && current.currentSentence) {
-        issues.push({
-          issue: current.issue || '',
-          currentSentence: current.currentSentence || '',
-          correctedSentence: current.correctedSentence || current.currentSentence || '',
-          explanation: current.explanation || '',
-          position: current.position || 0
-        });
-        current = {};
-      }
-      continue;
-    }
+    const t = line.trim();
+    if (t === '---') { pushCurrent(); continue; }
+    if (!t || t.startsWith('#')) continue;
 
-    if (trimmed.startsWith('#')) continue;
-
-    const colonIdx = trimmed.indexOf(':');
-    if (colonIdx > 0) {
-      const key = trimmed.substring(0, colonIdx).toLowerCase();
-      const value = trimmed.substring(colonIdx + 1).trim();
-
+    const idx = t.indexOf(':');
+    if (idx > 0) {
+      const key = t.substring(0, idx).toLowerCase();
+      const val = t.substring(idx + 1).trim();
       switch (key) {
-        case 'issue':
-          current.issue = value;
-          break;
-        case 'cur':
-        case 'current':
-          current.currentSentence = value;
-          break;
-        case 'fix':
-        case 'corrected':
-          current.correctedSentence = value;
-          break;
-        case 'exp':
-        case 'explanation':
-          current.explanation = value;
-          break;
-        case 'pos':
-        case 'position':
-          current.position = parseInt(value) || 0;
-          break;
+        case 'issue': current.issue = val; break;
+        case 'cur': case 'current': current.currentSentence = val; break;
+        case 'fix': case 'corrected': current.correctedSentence = val; break;
+        case 'exp': case 'explanation': current.explanation = val; break;
+        case 'pos': case 'position': current.position = parseInt(val) || 0; break;
       }
     }
   }
-
-  // Last item
-  if (current.issue && current.currentSentence) {
-    issues.push({
-      issue: current.issue || '',
-      currentSentence: current.currentSentence || '',
-      correctedSentence: current.correctedSentence || current.currentSentence || '',
-      explanation: current.explanation || '',
-      position: current.position || 0
-    });
-  }
-
+  pushCurrent();
   return issues;
 };
 
-/**
- * Euphony section পার্স করা
- * Format: বর্তমান|বিকল্প১,বিকল্প২|কারণ|position
- */
-const parseEuphonySection = (lines: string[]): ParsedMainResponse['euphonyImprovements'] => {
-  const improvements: ParsedMainResponse['euphonyImprovements'] = [];
-
+// শব্দ|বিকল্প১,বিকল্প২|কারণ|pos
+const parseEuphonyLines = (lines: string[]) => {
+  const items: UnifiedResponse['euphonyImprovements'] = [];
   for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-
-    const parts = trimmed.split('|');
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const parts = t.split('|');
     if (parts.length >= 4) {
-      improvements.push({
+      items.push({
         current: parts[0].trim(),
         suggestions: parts[1].split(',').map(s => s.trim()).filter(Boolean),
         reason: parts[2].trim(),
@@ -281,116 +216,78 @@ const parseEuphonySection = (lines: string[]): ParsedMainResponse['euphonyImprov
       });
     }
   }
-
-  return improvements;
+  return items;
 };
 
-/**
- * Style Response পার্স করা
- * Format:
- * @STYLE
- * বর্তমান|সংশোধন|টাইপ|position
- */
-export const parseStyleToon = (raw: string): ParsedStyleResponse => {
-  const result: ParsedStyleResponse = { styleConversions: [] };
-  
-  const lines = raw.split('\n');
-  let inStyle = false;
-
+// বর্তমান|সংশোধিত|টাইপ|pos
+const parseStyleLines = (lines: string[]) => {
+  const items: UnifiedResponse['styleConversions'] = [];
   for (const line of lines) {
-    const trimmed = line.trim();
-    
-    if (trimmed.toUpperCase() === '@STYLE' || trimmed.toUpperCase() === 'STYLE') {
-      inStyle = true;
-      continue;
-    }
-
-    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('@')) continue;
-
-    if (inStyle) {
-      const parts = trimmed.split('|');
-      if (parts.length >= 4) {
-        result.styleConversions.push({
-          current: parts[0].trim(),
-          suggestion: parts[1].trim(),
-          type: parts[2].trim(),
-          position: parseInt(parts[3]) || 0
-        });
-      }
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const parts = t.split('|');
+    if (parts.length >= 4) {
+      items.push({
+        current: parts[0].trim(),
+        suggestion: parts[1].trim(),
+        type: parts[2].trim(),
+        position: parseInt(parts[3]) || 0
+      });
     }
   }
-
-  return result;
+  return items;
 };
 
-/**
- * Tone Response পার্স করা
- * Format:
- * @TONE
- * বর্তমান|সংশোধন|কারণ|position
- */
-export const parseToneToon = (raw: string): ParsedToneResponse => {
-  const result: ParsedToneResponse = { toneConversions: [] };
-  
-  const lines = raw.split('\n');
-  let inTone = false;
-
+// বর্তমান|সংশোধিত|কারণ|pos
+const parseToneLines = (lines: string[]) => {
+  const items: UnifiedResponse['toneConversions'] = [];
   for (const line of lines) {
-    const trimmed = line.trim();
-    
-    if (trimmed.toUpperCase() === '@TONE' || trimmed.toUpperCase() === 'TONE') {
-      inTone = true;
-      continue;
-    }
-
-    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('@')) continue;
-
-    if (inTone) {
-      const parts = trimmed.split('|');
-      if (parts.length >= 4) {
-        result.toneConversions.push({
-          current: parts[0].trim(),
-          suggestion: parts[1].trim(),
-          reason: parts[2].trim(),
-          position: parseInt(parts[3]) || 0
-        });
-      }
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const parts = t.split('|');
+    if (parts.length >= 4) {
+      items.push({
+        current: parts[0].trim(),
+        suggestion: parts[1].trim(),
+        reason: parts[2].trim(),
+        position: parseInt(parts[3]) || 0
+      });
     }
   }
-
-  return result;
+  return items;
 };
 
 /**
- * Auto-detect এবং parse করা (JSON fallback সহ)
+ * Auto-detect parser (TOON or JSON fallback)
  */
-export const parseAIResponse = (raw: string): any => {
+export const parseAIResponse = (raw: string): UnifiedResponse | null => {
   const trimmed = raw.trim();
   
   // TOON format check
   if (trimmed.includes('@SPELLING') || trimmed.includes('@MIXING') || 
-      trimmed.includes('@PUNCTUATION') || trimmed.includes('@EUPHONY')) {
-    return parseMainToon(trimmed);
-  }
-  
-  if (trimmed.includes('@STYLE')) {
-    return parseStyleToon(trimmed);
-  }
-  
-  if (trimmed.includes('@TONE')) {
-    return parseToneToon(trimmed);
+      trimmed.includes('@PUNCTUATION') || trimmed.includes('@STYLE') ||
+      trimmed.includes('@TONE') || trimmed.includes('@EUPHONY')) {
+    return parseUnifiedToon(trimmed);
   }
 
-  // JSON fallback (backward compatibility)
+  // JSON fallback
   try {
-    // Clean markdown code blocks if present
     let cleaned = trimmed;
     if (cleaned.startsWith('```')) {
       cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
     }
-    return JSON.parse(cleaned);
+    const json = JSON.parse(cleaned);
+    // JSON to unified format
+    return {
+      spellingErrors: json.spellingErrors || [],
+      languageStyleMixing: json.languageStyleMixing || { detected: false },
+      punctuationIssues: json.punctuationIssues || [],
+      euphonyImprovements: json.euphonyImprovements || [],
+      styleConversions: json.styleConversions || [],
+      toneConversions: json.toneConversions || []
+    };
   } catch {
-    console.warn('Failed to parse response:', trimmed.substring(0, 200));
+    console.warn('Parse failed:', trimmed.substring(0, 200));
     return null;
   }
 };
