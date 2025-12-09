@@ -276,7 +276,7 @@ function App() {
     }
 
     setIsLoading(true);
-    setLoadingText('বি��্লেষণ করা হচ্ছে...');
+    setLoadingText('বিশ্লেষণ করা হচ্ছে...');
 
     // Reset all states
     setCorrections([]);
