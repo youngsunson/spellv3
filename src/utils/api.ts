@@ -4,7 +4,7 @@ import { parseAIResponse, extractTextFromGeminiResponse, UnifiedResponse } from 
 import { buildUnifiedPrompt, UnifiedPromptOptions } from '../prompts/unified';
 
 /**
- * একটি মাত্র API call - সব কিছু একসাথে
+ * একটি মাত্র API call - সব বিশ্লেষণ একসাথে
  */
 export const analyzeText = async (
   options: UnifiedPromptOptions,
@@ -24,7 +24,7 @@ export const analyzeText = async (
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           responseMimeType: 'text/plain',
-          temperature: 0.2
+          temperature: 0.15
         }
       })
     });
@@ -36,19 +36,25 @@ export const analyzeText = async (
   if (!response.ok) {
     const status = response.status;
     const messages: Record<number, string> = {
-      401: 'API Key সমস্যা। Key চেক করুন।',
-      403: 'API অনুমতি নেই।',
-      404: `মডেল (${selectedModel}) পাওয়া যায়নি।`,
-      429: 'Rate limit! কিছুক্ষণ পর চেষ্টা করুন।',
-      500: 'Gemini সার্ভার সমস্যা।'
+      401: 'API Key ভুল বা মেয়াদ উত্তীর্ণ।',
+      403: 'API অনুমতি নেই। Key চেক করুন।',
+      404: `মডেল (${selectedModel}) পাওয়া যায়নি। সেটিংস চেক করুন।`,
+      429: 'Rate limit! ১ মিনিট পর চেষ্টা করুন।',
+      500: 'Gemini সার্ভারে সমস্যা। পরে চেষ্টা করুন।',
+      503: 'Gemini সার্ভার ব্যস্ত। পরে চেষ্টা করুন।'
     };
-    throw new Error(messages[status] || `ত্রুটি: ${status}`);
+    const bodyText = await response.text().catch(() => '');
+    console.error('API Error:', status, bodyText);
+    throw new Error(messages[status] || `API ত্রুটি: ${status}`);
   }
 
   const data = await response.json();
   const raw = extractTextFromGeminiResponse(data);
   
-  if (!raw) return null;
+  if (!raw) {
+    console.warn('Empty response from Gemini');
+    return null;
+  }
   
   return parseAIResponse(raw);
 };
