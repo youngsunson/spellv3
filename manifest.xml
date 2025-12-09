@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+           xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+           xsi:type="TaskPaneApp">
+
+  <!-- ATTENTION: This GUID MUST be unique for your application in the store. -->
+  <Id>c5ccff27-7861-481b-9f61-59be25c8a527</Id>
+  <Version>2.0.0.0</Version>
+  <ProviderName>Bhasha Mitra</ProviderName>
+  <DefaultLocale>bn-BD</DefaultLocale>
+
+  <DisplayName DefaultValue="ভাষা মিত্র - বানান পরীক্ষক "/>
+  <Description DefaultValue="Bangla spell checker, grammar checker, and writing assistant for Microsoft Word"/>
+
+  <!-- Icon URLs for the store/launcher -->
+  <IconUrl DefaultValue="https://youngsunson.github.io/spellv3/assets/icon-32.png"/>
+  <HighResolutionIconUrl DefaultValue="https://youngsunson.github.io/spellv3/assets/icon-64.png"/>
+  
+  <SupportUrl DefaultValue="https://youngsunson.github.io/spellv3"/>
+  
+  <AppDomains>
+    <!-- Your hosting domain -->
+    <AppDomain>https://youngsunson.github.io</AppDomain>
+    <!-- Domain required for Gemini API calls -->
+    <AppDomain>https://generativelanguage.googleapis.com</AppDomain>
+  </AppDomains>
+  
+  <Hosts>
+    <Host Name="Document"/>
+  </Hosts>
+  
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://youngsunson.github.io/spellv3/index.html"/>
+  </DefaultSettings>
+  
+  <!-- ReadWriteDocument is needed to read and insert text into the document -->
+  <Permissions>ReadWriteDocument</Permissions>
+  
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Hosts>
+      <Host xsi:type="Document">
+        <DesktopFormFactor>
+          <GetStarted>
+            <Title resid="GetStarted.Title"/>
+            <Description resid="GetStarted.Description"/>
+            <LearnMoreUrl resid="GetStarted.LearnMoreUrl"/>
+          </GetStarted>
+          
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="CommandsGroup">
+                <Label resid="CommandsGroup.Label"/>
+                <Icon>
+                  <bt:Image size="16" resid="Icon.16x16"/>
+                  <bt:Image size="32" resid="Icon.32x32"/>
+                  <bt:Image size="80" resid="Icon.80x80"/>
+                </Icon>
+                <Control xsi:type="Button" id="TaskpaneButton">
+                  <Label resid="TaskpaneButton.Label"/>
+                  <Supertip>
+                    <Title resid="TaskpaneButton.Label"/>
+                    <Description resid="TaskpaneButton.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16"/>
+                    <bt:Image size="32" resid="Icon.32x32"/>
+                    <bt:Image size="80" resid="Icon.80x80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>ButtonId1</TaskpaneId>
+                    <SourceLocation resid="Taskpane.Url"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+    
+    <Resources>
+      <bt:Images>
+        <!-- Icons used in the ribbon command group -->
+        <bt:Image id="Icon.16x16" DefaultValue="https://youngsunson.github.io/spellv3/assets/icon-16.png"/>
+        <bt:Image id="Icon.32x32" DefaultValue="https://youngsunson.github.io/spellv3/assets/icon-32.png"/>
+        <bt:Image id="Icon.80x80" DefaultValue="https://youngsunson.github.io/spellv3/assets/icon-80.png"/>
+      </bt:Images>
+      
+      <bt:Urls>
+        <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://youngsunson.github.io/spellv3"/>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://youngsunson.github.io/spellv3/index.html"/>
+      </bt:Urls>
+      
+      <bt:ShortStrings>
+        <bt:String id="GetStarted.Title" DefaultValue="ভাষা মিত্র চালু হয়েছে!"/>
+        <bt:String id="CommandsGroup.Label" DefaultValue="ভাষা মিত্র"/>
+        <bt:String id="TaskpaneButton.Label" DefaultValue="বানান পরীক্ষক"/>
+      </bt:ShortStrings>
+      
+      <bt:LongStrings>
+        <bt:String id="GetStarted.Description" DefaultValue="আপনার বাংলা লেখা পরীক্ষা করতে ভাষা মিত্র সাইডবার খুলুন"/>
+        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="বাংলা বানান ও ব্যাকরণ পরীক্ষা করুন"/>
+      </bt:LongStrings>
+      
+      <!-- **** স্টোর সাবমিশনের জন্য ইংরেজি (en-US) ওভাররাইড **** -->
+      <Locale name="en-US">
+        <bt:ShortStrings>
+          <bt:String id="GetStarted.Title" DefaultValue="Bhasha Mitra is Ready!"/>
+          <bt:String id="CommandsGroup.Label" DefaultValue="Bhasha Mitra"/>
+          <bt:String id="TaskpaneButton.Label" DefaultValue="Spell Checker"/>
+        </bt:ShortStrings>
+        <bt:LongStrings>
+          <bt:String id="GetStarted.Description" DefaultValue="Open the Bhasha Mitra sidebar to check and improve your Bengali writing."/>
+          <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Check Bengali spelling, grammar, and style with AI."/>
+        </bt:LongStrings>
+      </Locale>
+      
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>

@@ -1,0 +1,32 @@
+{
+  "name": "ভাষা মিত্র",
+  "version": "2.0.0",
+  "description": "বাংলা বানান পরীক্ষক এবং ব্যাকরণ সহায়ক",
+  "author": "Himadri Biswas",
+  "homepage": "https://youngsunson.github.io/spellv3/index.html",
+  "supportedOfficeApps": [
+    "Word"
+  ],
+  "features": [
+    "বানান পরীক্ষা",
+    "ভাব/টোন বিশ্লেষণ",
+    "সাধু-চলিত ভাষা মিশ্রণ সনাক্তকরণ",
+    "বিরাম চিহ্ন পরামর্শ",
+    "শ্রুতিমধুরতা উন্নতি",
+    "লেখার ধরন বিশ্লেষণ",
+    "অনুপস্থিত উপাদান চিহ্নিতকরণ",
+    "উন্নতির পরামর্শ"
+  ],
+  "aiModel": "Google Gemini",
+  "supportedModels": [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash-exp",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash",
+    "gemini-pro"
+  ],
+  "languages": [
+    "bn-BD",
+    "en-US"
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "name": "bhasha-mitra-word-addin",
+  "version": "2.0.0",
+  "description": "Bangla language assistant for Microsoft Word",
+  "main": "index.html",
+  "scripts": {
+    "dev": "vite --port 3000 --host localhost",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "deploy": "npm run build && gh-pages -d dist",
+    "start": "office-addin-debugging start manifest-dev.xml desktop",
+    "start:prod": "office-addin-debugging start manifest.xml desktop",
+    "stop": "office-addin-debugging stop manifest.xml",
+    "validate": "office-addin-manifest validate manifest.xml",
+    "validate:dev": "office-addin-manifest validate manifest-dev.xml"
+  },
+  "keywords": [
+    "office-add-in",
+    "word",
+    "bangla",
+    "spell-checker",
+    "grammar",
+    "gemini-ai"
+  ],
+  "author": "হিমাদ্রি বিশ্বাস",
+  "license": "GNU AGPLv3",
+  "dependencies": {
+    "@types/office-js": "^1.0.376",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.43",
+    "@types/react-dom": "^18.2.17",
+    "@vitejs/plugin-react": "^4.2.1",
+    "gh-pages": "^6.1.0",
+    "office-addin-debugging": "^5.0.11",
+    "office-addin-dev-certs": "^1.13.1",
+    "office-addin-lint": "^2.3.1",
+    "office-addin-manifest": "^1.13.1",
+    "rollup-plugin-license": "^3.6.0",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.8"
+  }
+}
