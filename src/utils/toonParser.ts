@@ -1,5 +1,8 @@
 // src/utils/toonParser.ts
 
+/**
+ * Unified Response Interface
+ */
 export interface UnifiedResponse {
   spellingErrors: Array<{
     wrong: string;
@@ -75,6 +78,7 @@ export const parseUnifiedToon = (raw: string): UnifiedResponse => {
     contentAnalysis: null
   };
 
+  // @ দিয়ে sections আলাদা করা
   const sections = raw.split(/^@/m).filter(s => s.trim());
 
   for (const section of sections) {
@@ -84,11 +88,7 @@ export const parseUnifiedToon = (raw: string): UnifiedResponse => {
 
     switch (header) {
       case 'SPELLING':
-        result.spellingErrors = parsePipeLines(content, 3).map(p => ({
-          wrong: p[0],
-          suggestions: p[1].split(',').map(s => s.trim()).filter(Boolean),
-          position: parseInt(p[2]) || 0
-        }));
+        result.spellingErrors = parseSpellingLines(content);
         break;
 
       case 'MIXING':
@@ -100,30 +100,15 @@ export const parseUnifiedToon = (raw: string): UnifiedResponse => {
         break;
 
       case 'EUPHONY':
-        result.euphonyImprovements = parsePipeLines(content, 4).map(p => ({
-          current: p[0],
-          suggestions: p[1].split(',').map(s => s.trim()).filter(Boolean),
-          reason: p[2],
-          position: parseInt(p[3]) || 0
-        }));
+        result.euphonyImprovements = parseEuphonyLines(content);
         break;
 
       case 'STYLE':
-        result.styleConversions = parsePipeLines(content, 4).map(p => ({
-          current: p[0],
-          suggestion: p[1],
-          type: p[2],
-          position: parseInt(p[3]) || 0
-        }));
+        result.styleConversions = parseStyleLines(content);
         break;
 
       case 'TONE':
-        result.toneConversions = parsePipeLines(content, 4).map(p => ({
-          current: p[0],
-          suggestion: p[1],
-          reason: p[2],
-          position: parseInt(p[3]) || 0
-        }));
+        result.toneConversions = parseToneLines(content);
         break;
 
       case 'CONTENT':
@@ -135,21 +120,33 @@ export const parseUnifiedToon = (raw: string): UnifiedResponse => {
   return result;
 };
 
-// Helper: Parse pipe-separated lines
-const parsePipeLines = (lines: string[], minParts: number): string[][] => {
-  const results: string[][] = [];
+/**
+ * Parse SPELLING section
+ * Format: ভুল|সঠিক১,সঠিক২|pos
+ */
+const parseSpellingLines = (lines: string[]): UnifiedResponse['spellingErrors'] => {
+  const results: UnifiedResponse['spellingErrors'] = [];
+  
   for (const line of lines) {
     const t = line.trim();
-    if (!t || t.startsWith('#') || t.includes(':') && !t.includes('|')) continue;
+    if (!t || t.startsWith('#') || !t.includes('|')) continue;
+    
     const parts = t.split('|').map(p => p.trim());
-    if (parts.length >= minParts) {
-      results.push(parts);
+    if (parts.length >= 3 && parts[0] && parts[1]) {
+      results.push({
+        wrong: parts[0],
+        suggestions: parts[1].split(',').map(s => s.trim()).filter(Boolean),
+        position: parseInt(parts[2]) || 0
+      });
     }
   }
+  
   return results;
 };
 
-// Parse MIXING section
+/**
+ * Parse MIXING section
+ */
 const parseMixingLines = (lines: string[]): UnifiedResponse['languageStyleMixing'] => {
   const result: UnifiedResponse['languageStyleMixing'] = { detected: false };
   const corrections: NonNullable<UnifiedResponse['languageStyleMixing']['corrections']> = [];
@@ -166,30 +163,39 @@ const parseMixingLines = (lines: string[]): UnifiedResponse['languageStyleMixing
 
     if (inCorrections && t.includes('|')) {
       const parts = t.split('|').map(p => p.trim());
-      if (parts.length >= 4) {
+      if (parts.length >= 4 && parts[0] && parts[1]) {
         corrections.push({
           current: parts[0],
           suggestion: parts[1],
-          type: parts[2],
+          type: parts[2] || '',
           position: parseInt(parts[3]) || 0
         });
       }
     } else if (t.includes(':')) {
       const idx = t.indexOf(':');
-      const key = t.substring(0, idx).toLowerCase();
+      const key = t.substring(0, idx).toLowerCase().trim();
       const val = t.substring(idx + 1).trim();
       
-      if (key === 'detected') result.detected = val.toLowerCase() === 'true';
-      else if (key === 'style') result.recommendedStyle = val;
-      else if (key === 'reason') result.reason = val;
+      if (key === 'detected') {
+        result.detected = val.toLowerCase() === 'true' || val === 'হ্যাঁ';
+      } else if (key === 'style') {
+        result.recommendedStyle = val;
+      } else if (key === 'reason') {
+        result.reason = val;
+      }
     }
   }
 
-  if (corrections.length > 0) result.corrections = corrections;
+  if (corrections.length > 0) {
+    result.corrections = corrections;
+  }
+  
   return result;
 };
 
-// Parse PUNCTUATION section
+/**
+ * Parse PUNCTUATION section
+ */
 const parsePunctuationLines = (lines: string[]): UnifiedResponse['punctuationIssues'] => {
   const issues: UnifiedResponse['punctuationIssues'] = [];
   let current: Partial<UnifiedResponse['punctuationIssues'][0]> = {};
@@ -209,28 +215,125 @@ const parsePunctuationLines = (lines: string[]): UnifiedResponse['punctuationIss
 
   for (const line of lines) {
     const t = line.trim();
-    if (t === '---') { pushCurrent(); continue; }
+    
+    if (t === '---') {
+      pushCurrent();
+      continue;
+    }
+    
     if (!t || t.startsWith('#')) continue;
 
     const idx = t.indexOf(':');
     if (idx > 0) {
-      const key = t.substring(0, idx).toLowerCase();
+      const key = t.substring(0, idx).toLowerCase().trim();
       const val = t.substring(idx + 1).trim();
 
       switch (key) {
-        case 'issue': current.issue = val; break;
-        case 'cur': case 'current': current.currentSentence = val; break;
-        case 'fix': case 'corrected': current.correctedSentence = val; break;
-        case 'exp': case 'explanation': current.explanation = val; break;
-        case 'pos': case 'position': current.position = parseInt(val) || 0; break;
+        case 'issue':
+          current.issue = val;
+          break;
+        case 'cur':
+        case 'current':
+          current.currentSentence = val;
+          break;
+        case 'fix':
+        case 'corrected':
+          current.correctedSentence = val;
+          break;
+        case 'exp':
+        case 'explanation':
+          current.explanation = val;
+          break;
+        case 'pos':
+        case 'position':
+          current.position = parseInt(val) || 0;
+          break;
       }
     }
   }
+  
   pushCurrent();
   return issues;
 };
 
-// Parse CONTENT section
+/**
+ * Parse EUPHONY section
+ * Format: শব্দ|বিকল্প১,বিকল্প২|কারণ|pos
+ */
+const parseEuphonyLines = (lines: string[]): UnifiedResponse['euphonyImprovements'] => {
+  const results: UnifiedResponse['euphonyImprovements'] = [];
+  
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t || t.startsWith('#') || !t.includes('|')) continue;
+    
+    const parts = t.split('|').map(p => p.trim());
+    if (parts.length >= 4 && parts[0] && parts[1]) {
+      results.push({
+        current: parts[0],
+        suggestions: parts[1].split(',').map(s => s.trim()).filter(Boolean),
+        reason: parts[2] || '',
+        position: parseInt(parts[3]) || 0
+      });
+    }
+  }
+  
+  return results;
+};
+
+/**
+ * Parse STYLE section
+ * Format: বর্তমান|সংশোধিত|টাইপ|pos
+ */
+const parseStyleLines = (lines: string[]): UnifiedResponse['styleConversions'] => {
+  const results: UnifiedResponse['styleConversions'] = [];
+  
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t || t.startsWith('#') || !t.includes('|')) continue;
+    
+    const parts = t.split('|').map(p => p.trim());
+    if (parts.length >= 4 && parts[0] && parts[1]) {
+      results.push({
+        current: parts[0],
+        suggestion: parts[1],
+        type: parts[2] || '',
+        position: parseInt(parts[3]) || 0
+      });
+    }
+  }
+  
+  return results;
+};
+
+/**
+ * Parse TONE section
+ * Format: বর্তমান|সংশোধিত|কারণ|pos
+ */
+const parseToneLines = (lines: string[]): UnifiedResponse['toneConversions'] => {
+  const results: UnifiedResponse['toneConversions'] = [];
+  
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t || t.startsWith('#') || !t.includes('|')) continue;
+    
+    const parts = t.split('|').map(p => p.trim());
+    if (parts.length >= 4 && parts[0] && parts[1]) {
+      results.push({
+        current: parts[0],
+        suggestion: parts[1],
+        reason: parts[2] || '',
+        position: parseInt(parts[3]) || 0
+      });
+    }
+  }
+  
+  return results;
+};
+
+/**
+ * Parse CONTENT section
+ */
 const parseContentLines = (lines: string[]): UnifiedResponse['contentAnalysis'] => {
   const result: NonNullable<UnifiedResponse['contentAnalysis']> = {
     contentType: '',
@@ -245,14 +348,24 @@ const parseContentLines = (lines: string[]): UnifiedResponse['contentAnalysis'] 
 
     const idx = t.indexOf(':');
     if (idx > 0) {
-      const key = t.substring(0, idx).toLowerCase();
+      const key = t.substring(0, idx).toLowerCase().trim();
       const val = t.substring(idx + 1).trim();
 
       switch (key) {
-        case 'type': result.contentType = val; break;
-        case 'desc': case 'description': result.description = val; break;
-        case 'missing': result.missingElements = val.split(',').map(s => s.trim()).filter(Boolean); break;
-        case 'tips': case 'suggestions': result.suggestions = val.split(',').map(s => s.trim()).filter(Boolean); break;
+        case 'type':
+          result.contentType = val;
+          break;
+        case 'desc':
+        case 'description':
+          result.description = val;
+          break;
+        case 'missing':
+          result.missingElements = val.split(',').map(s => s.trim()).filter(Boolean);
+          break;
+        case 'tips':
+        case 'suggestions':
+          result.suggestions = val.split(',').map(s => s.trim()).filter(Boolean);
+          break;
       }
     }
   }
@@ -267,20 +380,26 @@ export const parseAIResponse = (raw: string): UnifiedResponse | null => {
   const trimmed = raw.trim();
   
   // TOON format check
-  if (trimmed.includes('@SPELLING') || trimmed.includes('@MIXING') || 
-      trimmed.includes('@PUNCTUATION') || trimmed.includes('@STYLE') ||
-      trimmed.includes('@TONE') || trimmed.includes('@EUPHONY') ||
-      trimmed.includes('@CONTENT')) {
+  if (
+    trimmed.includes('@SPELLING') || 
+    trimmed.includes('@MIXING') || 
+    trimmed.includes('@PUNCTUATION') || 
+    trimmed.includes('@STYLE') ||
+    trimmed.includes('@TONE') || 
+    trimmed.includes('@EUPHONY') ||
+    trimmed.includes('@CONTENT')
+  ) {
     return parseUnifiedToon(trimmed);
   }
 
-  // JSON fallback
+  // JSON fallback (backward compatibility)
   try {
     let cleaned = trimmed;
     if (cleaned.startsWith('```')) {
       cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
     }
     const json = JSON.parse(cleaned);
+    
     return {
       spellingErrors: json.spellingErrors || [],
       languageStyleMixing: json.languageStyleMixing || { detected: false },
