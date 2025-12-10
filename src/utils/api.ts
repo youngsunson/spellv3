@@ -5,13 +5,11 @@ import { buildUnifiedPrompt, UnifiedPromptOptions } from '../prompts/unified';
 
 /**
  * মডেল অনুযায়ী Rate Limits (Free Tier)
- * সূত্র: https://ai.google.dev/pricing
  */
 export const MODEL_LIMITS: Record<string, { rpm: number; rpd: number; tpm: number }> = {
   'gemini-2.5-flash': { rpm: 5, rpd: 20, tpm: 250000 },
   'gemini-2.5-flash-lite': { rpm: 10, rpd: 20, tpm: 250000 },
   'gemini-2.0-flash': { rpm: 15, rpd: 1500, tpm: 1000000 },
-  // Default fallback
   'default': { rpm: 5, rpd: 20, tpm: 250000 }
 };
 
@@ -95,28 +93,6 @@ export const incrementRequestCount = (model: string): RateLimitInfo => {
 };
 
 /**
- * Get all models' rate limit info
- */
-export const getAllRateLimits = (): Record<string, RateLimitInfo> => {
-  const models = Object.keys(MODEL_LIMITS).filter(m => m !== 'default');
-  const result: Record<string, RateLimitInfo> = {};
-  
-  for (const model of models) {
-    result[model] = getRateLimitInfo(model);
-  }
-  
-  return result;
-};
-
-/**
- * Reset rate limit for a model (for testing)
- */
-export const resetRateLimit = (model: string): void => {
-  const storageKey = `bhasha_mitra_requests_${model}`;
-  localStorage.removeItem(storageKey);
-};
-
-/**
  * একটি মাত্র API call - সব বিশ্লেষণ একসাথে
  */
 export const analyzeText = async (
@@ -130,10 +106,17 @@ export const analyzeText = async (
     throw new Error(`দৈনিক সীমা (${rateLimitInfo.limit}টি) শেষ। কাল আবার চেষ্টা করুন বা অন্য মডেল ব্যবহার করুন।`);
   }
 
+  // Count words for validation
+  const wordCount = options.text.trim().split(/\s+/).filter(Boolean).length;
+
   const prompt = buildUnifiedPrompt(options);
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`;
 
   let response: Response;
+
+  // Timeout for request (60 seconds)
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60000);
 
   try {
     response = await fetch(url, {
@@ -143,29 +126,38 @@ export const analyzeText = async (
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           responseMimeType: 'text/plain',
-          temperature: 0.15
+          temperature: 0.1, // Lower temperature for more consistent output
+          maxOutputTokens: 4096
         }
-      })
+      }),
+      signal: controller.signal
     });
-  } catch (err) {
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    
+    if (err.name === 'AbortError') {
+      throw new Error('অনুরোধ সময়সীমা অতিক্রম করেছে। আবার চেষ্টা করুন বা ছোট টেক্সট ব্যবহার করুন।');
+    }
+    
     console.error('Network error:', err);
     throw new Error('ইন্টারনেট সংযোগে সমস্যা। নেটওয়ার্ক চেক করুন।');
   }
+
+  clearTimeout(timeoutId);
 
   if (!response.ok) {
     const status = response.status;
     
     // 429 = Rate limited by API
     if (status === 429) {
-      // Mark as limited even if our count is lower
       const storageKey = `bhasha_mitra_requests_${selectedModel}`;
       const limit = getSafeLimit(selectedModel);
       localStorage.setItem(storageKey, JSON.stringify({
         date: new Date().toDateString(),
-        count: limit // Set to max
+        count: limit
       }));
       
-      throw new Error('Rate limit! Google এর দৈনিক সীমা শেষ। কাল আবার চেষ্টা করুন অথবা অন্য মডেল ব্যবহার করুন।');
+      throw new Error('Rate limit! Google এর দৈনিক সীমা শেষ। কাল আবার চেষ্টা করুন বা অন্য মডেল ব্যবহার করুন।');
     }
     
     const messages: Record<number, string> = {
@@ -191,5 +183,14 @@ export const analyzeText = async (
     return null;
   }
   
-  return parseAIResponse(raw);
+  // Pass wordCount for validation
+  const result = parseAIResponse(raw, wordCount);
+  
+  // Final validation: if spelling errors exceed word count, something is wrong
+  if (result && result.spellingErrors.length > wordCount) {
+    console.warn(`Invalid result: ${result.spellingErrors.length} errors for ${wordCount} words`);
+    result.spellingErrors = result.spellingErrors.slice(0, Math.ceil(wordCount * 0.3));
+  }
+  
+  return result;
 };
