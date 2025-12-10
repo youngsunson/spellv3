@@ -422,13 +422,24 @@ function App() {
       setToneSuggestions(sortByPos(dedupedTone));
       setStyleSuggestions(sortByPos(dedupedStyle));
 
-      if (result.languageStyleMixing?.detected) {
-        const mixing = { ...result.languageStyleMixing };
-        if (mixing.corrections) {
-          mixing.corrections = sortByPos(deduplicateMixingCorrections(mixing.corrections));
-        }
-        setLanguageStyleMixing(mixing);
-      }
+if (result.languageStyleMixing?.detected) {
+  const mixing: StyleMixing = {
+    detected: result.languageStyleMixing.detected,
+    recommendedStyle: result.languageStyleMixing.recommendedStyle,
+    reason: result.languageStyleMixing.reason,
+    corrections: result.languageStyleMixing.corrections 
+      ? sortByPos(deduplicateMixingCorrections(
+          result.languageStyleMixing.corrections.map(c => ({
+            current: c.current,
+            suggestion: c.suggestion,
+            type: c.type,
+            position: c.position
+          }))
+        ))
+      : undefined
+  };
+  setLanguageStyleMixing(mixing);
+}
 
       if (result.contentAnalysis) {
         setContentAnalysis(result.contentAnalysis);
