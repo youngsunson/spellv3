@@ -59,7 +59,7 @@ export const buildUnifiedPrompt = (options: UnifiedPromptOptions): string => {
 type:লেখার ধরন
 desc:সংক্ষিপ্ত বর্ণনা
 missing:যা নেই১,যা নেই২
-tips:পরামর্শ১,পরামর্শ২';
+tips:পরামর্শ১,পরামর্শ২`;
 
   return `আপনি একজন দক্ষ বাংলা প্রুফরিডার।
 ${docCfg.mainHint}
