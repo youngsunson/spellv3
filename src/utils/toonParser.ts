@@ -2,7 +2,6 @@
 
 /**
  * Unified Response Interface
- * সব ধরনের বিশ্লেষণ ফলাফল একসাথে
  */
 export interface UnifiedResponse {
   spellingErrors: Array<{
@@ -66,9 +65,57 @@ export const extractTextFromGeminiResponse = (data: any): string | null => {
 };
 
 /**
- * Unified TOON Parser - সব sections একসাথে parse করে
+ * Normalize text for comparison
  */
-export const parseUnifiedToon = (raw: string): UnifiedResponse => {
+const normalizeText = (text: string): string => {
+  return text.trim().toLowerCase().replace(/\s+/g, ' ');
+};
+
+/**
+ * Remove duplicates from array based on a key
+ */
+const removeDuplicates = <T>(arr: T[], keyFn: (item: T) => string): T[] => {
+  const seen = new Set<string>();
+  return arr.filter(item => {
+    const key = normalizeText(keyFn(item));
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+};
+
+/**
+ * Validate spelling errors
+ */
+const validateSpellingErrors = (
+  errors: UnifiedResponse['spellingErrors'],
+  maxAllowed: number
+): UnifiedResponse['spellingErrors'] => {
+  // Remove duplicates
+  const unique = removeDuplicates(errors, item => item.wrong);
+  
+  // Limit to maxAllowed
+  const limited = unique.slice(0, maxAllowed);
+  
+  // Filter out suspicious entries (empty, too short, numbers, English)
+  const filtered = limited.filter(err => {
+    const word = err.wrong.trim();
+    if (!word || word.length < 2) return false;
+    if (/^\d+$/.test(word)) return false; // Pure numbers
+    if (/^[a-zA-Z]+$/.test(word)) return false; // Pure English
+    if (err.suggestions.length === 0) return false;
+    return true;
+  });
+  
+  return filtered;
+};
+
+/**
+ * Unified TOON Parser
+ */
+export const parseUnifiedToon = (raw: string, wordCount?: number): UnifiedResponse => {
   const result: UnifiedResponse = {
     spellingErrors: [],
     languageStyleMixing: { detected: false },
@@ -118,6 +165,22 @@ export const parseUnifiedToon = (raw: string): UnifiedResponse => {
     }
   }
 
+  // Validate and deduplicate spelling errors
+  const maxErrors = wordCount ? Math.min(50, Math.ceil(wordCount * 0.5)) : 50;
+  result.spellingErrors = validateSpellingErrors(result.spellingErrors, maxErrors);
+
+  // Deduplicate other sections
+  result.toneConversions = removeDuplicates(result.toneConversions, item => item.current);
+  result.styleConversions = removeDuplicates(result.styleConversions, item => item.current);
+  result.euphonyImprovements = removeDuplicates(result.euphonyImprovements, item => item.current);
+  
+  if (result.languageStyleMixing.corrections) {
+    result.languageStyleMixing.corrections = removeDuplicates(
+      result.languageStyleMixing.corrections, 
+      item => item.current
+    );
+  }
+
   return result;
 };
 
@@ -134,11 +197,17 @@ const parseSpellingLines = (lines: string[]): UnifiedResponse['spellingErrors'] 
     
     const parts = t.split('|').map(p => p.trim());
     if (parts.length >= 3 && parts[0] && parts[1]) {
-      results.push({
-        wrong: parts[0],
-        suggestions: parts[1].split(',').map(s => s.trim()).filter(Boolean),
-        position: parseInt(parts[2]) || 0
-      });
+      const wrong = parts[0];
+      const suggestions = parts[1].split(',').map(s => s.trim()).filter(Boolean);
+      const position = parseInt(parts[2]) || 0;
+      
+      // Skip if wrong word is empty or too short
+      if (wrong.length < 2) continue;
+      
+      // Skip if no valid suggestions
+      if (suggestions.length === 0) continue;
+      
+      results.push({ wrong, suggestions, position });
     }
   }
   
@@ -147,12 +216,6 @@ const parseSpellingLines = (lines: string[]): UnifiedResponse['spellingErrors'] 
 
 /**
  * Parse MIXING section
- * Format:
- * detected:true/false
- * style:চলিত/সাধু
- * reason:কারণ
- * @CORRECTIONS
- * বর্তমান|সংশোধন|টাইপ|pos
  */
 const parseMixingLines = (lines: string[]): UnifiedResponse['languageStyleMixing'] => {
   const result: UnifiedResponse['languageStyleMixing'] = { detected: false };
@@ -202,13 +265,6 @@ const parseMixingLines = (lines: string[]): UnifiedResponse['languageStyleMixing
 
 /**
  * Parse PUNCTUATION section
- * Format:
- * issue:সমস্যা
- * cur:বাক্য
- * fix:সংশোধিত
- * exp:ব্যাখ্যা
- * pos:0
- * ---
  */
 const parsePunctuationLines = (lines: string[]): UnifiedResponse['punctuationIssues'] => {
   const issues: UnifiedResponse['punctuationIssues'] = [];
@@ -267,7 +323,9 @@ const parsePunctuationLines = (lines: string[]): UnifiedResponse['punctuationIss
   }
   
   pushCurrent();
-  return issues;
+  
+  // Limit punctuation issues
+  return issues.slice(0, 10);
 };
 
 /**
@@ -292,7 +350,8 @@ const parseEuphonyLines = (lines: string[]): UnifiedResponse['euphonyImprovement
     }
   }
   
-  return results;
+  // Limit euphony improvements
+  return results.slice(0, 10);
 };
 
 /**
@@ -317,7 +376,7 @@ const parseStyleLines = (lines: string[]): UnifiedResponse['styleConversions'] =
     }
   }
   
-  return results;
+  return results.slice(0, 30);
 };
 
 /**
@@ -342,16 +401,11 @@ const parseToneLines = (lines: string[]): UnifiedResponse['toneConversions'] => 
     }
   }
   
-  return results;
+  return results.slice(0, 30);
 };
 
 /**
  * Parse CONTENT section
- * Format:
- * type:লেখার ধরন
- * desc:সংক্ষিপ্ত বর্ণনা
- * missing:যা নেই১,যা নেই২
- * tips:পরামর্শ১,পরামর্শ২
  */
 const parseContentLines = (lines: string[]): UnifiedResponse['contentAnalysis'] => {
   const result: NonNullable<UnifiedResponse['contentAnalysis']> = {
@@ -379,11 +433,11 @@ const parseContentLines = (lines: string[]): UnifiedResponse['contentAnalysis'] 
           result.description = val;
           break;
         case 'missing':
-          result.missingElements = val.split(',').map(s => s.trim()).filter(Boolean);
+          result.missingElements = val.split(',').map(s => s.trim()).filter(Boolean).slice(0, 5);
           break;
         case 'tips':
         case 'suggestions':
-          result.suggestions = val.split(',').map(s => s.trim()).filter(Boolean);
+          result.suggestions = val.split(',').map(s => s.trim()).filter(Boolean).slice(0, 5);
           break;
       }
     }
@@ -395,7 +449,7 @@ const parseContentLines = (lines: string[]): UnifiedResponse['contentAnalysis'] 
 /**
  * Auto-detect parser (TOON বা JSON fallback)
  */
-export const parseAIResponse = (raw: string): UnifiedResponse | null => {
+export const parseAIResponse = (raw: string, wordCount?: number): UnifiedResponse | null => {
   const trimmed = raw.trim();
   
   // TOON format check
@@ -408,7 +462,7 @@ export const parseAIResponse = (raw: string): UnifiedResponse | null => {
     trimmed.includes('@EUPHONY') ||
     trimmed.includes('@CONTENT')
   ) {
-    return parseUnifiedToon(trimmed);
+    return parseUnifiedToon(trimmed, wordCount);
   }
 
   // JSON fallback (backward compatibility)
@@ -419,7 +473,7 @@ export const parseAIResponse = (raw: string): UnifiedResponse | null => {
     }
     const json = JSON.parse(cleaned);
     
-    return {
+    const result: UnifiedResponse = {
       spellingErrors: json.spellingErrors || [],
       languageStyleMixing: json.languageStyleMixing || { detected: false },
       punctuationIssues: json.punctuationIssues || [],
@@ -428,6 +482,12 @@ export const parseAIResponse = (raw: string): UnifiedResponse | null => {
       toneConversions: json.toneConversions || [],
       contentAnalysis: json.contentAnalysis || null
     };
+
+    // Apply validation
+    const maxErrors = wordCount ? Math.min(50, Math.ceil(wordCount * 0.5)) : 50;
+    result.spellingErrors = validateSpellingErrors(result.spellingErrors, maxErrors);
+    
+    return result;
   } catch {
     console.warn('Parse failed:', trimmed.substring(0, 300));
     return null;
