@@ -924,7 +924,7 @@ function App() {
               </div>
 
               <div className="option-item" onClick={() => setActiveModal('style')}>
-                <div className="opt-icon">����</div>
+                <div className="opt-icon">📝</div>
                 <div style={{ flex: 1 }}>
                   <div className="opt-title">ভাষারীতি (সাধু / চলিত)</div>
                   <div className="opt-desc">
