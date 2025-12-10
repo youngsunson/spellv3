@@ -1049,16 +1049,6 @@ function App() {
                 })}
               </div>
 
-              {/* Document Type */}
-              <label>📂 ডকুমেন্ট টাইপ (ডিফল্ট)</label>
-              <select value={docType} onChange={e => setDocType(e.target.value as DocType)}>
-                {(Object.keys(DOC_TYPE_CONFIG) as DocType[]).map(key => (
-                  <option key={key} value={key}>
-                    {DOC_TYPE_CONFIG[key].label}
-                  </option>
-                ))}
-              </select>
-
               <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
                 <button onClick={saveSettings} className="btn-primary-full">
                   ✓ সংরক্ষণ
@@ -1174,6 +1164,43 @@ function App() {
                   {selectedStyle === opt.id && <div className="check-mark">✓</div>}
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Doc Type Modal */}
+      {activeModal === 'doctype' && (
+        <div className="modal-overlay" onClick={() => setActiveModal('none')}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header style-header">
+              <h3>📂 ডকুমেন্ট টাইপ নির্বাচন</h3>
+              <button onClick={() => setActiveModal('none')}>✕</button>
+            </div>
+            <div className="modal-body">
+              {(Object.keys(DOC_TYPE_CONFIG) as DocType[]).map(dt => {
+                const cfg = DOC_TYPE_CONFIG[dt];
+                return (
+                  <div
+                    key={dt}
+                    className={`option-item ${docType === dt ? 'selected' : ''}`}
+                    onClick={() => {
+                      setDocType(dt);
+                      if (!selectedTone && cfg.defaultTone) {
+                        setSelectedTone(cfg.defaultTone);
+                      }
+                      setActiveModal('none');
+                    }}
+                  >
+                    <div className="opt-icon">📂</div>
+                    <div style={{ flex: 1 }}>
+                      <div className="opt-title">{cfg.label}</div>
+                      <div className="opt-desc">{cfg.description}</div>
+                    </div>
+                    {docType === dt && <div className="check-mark">✓</div>}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
