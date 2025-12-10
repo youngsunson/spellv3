@@ -2,12 +2,13 @@
 
 /**
  * Unified Response Interface
+ * position optional রাখা হয়েছে App.tsx এর সাথে compatibility এর জন্য
  */
 export interface UnifiedResponse {
   spellingErrors: Array<{
     wrong: string;
     suggestions: string[];
-    position: number;
+    position?: number;
   }>;
   languageStyleMixing: {
     detected: boolean;
@@ -17,7 +18,7 @@ export interface UnifiedResponse {
       current: string;
       suggestion: string;
       type: string;
-      position: number;
+      position?: number;
     }>;
   };
   punctuationIssues: Array<{
@@ -25,25 +26,25 @@ export interface UnifiedResponse {
     currentSentence: string;
     correctedSentence: string;
     explanation: string;
-    position: number;
+    position?: number;
   }>;
   euphonyImprovements: Array<{
     current: string;
     suggestions: string[];
     reason: string;
-    position: number;
+    position?: number;
   }>;
   styleConversions: Array<{
     current: string;
     suggestion: string;
     type: string;
-    position: number;
+    position?: number;
   }>;
   toneConversions: Array<{
     current: string;
     suggestion: string;
     reason: string;
-    position: number;
+    position?: number;
   }>;
   contentAnalysis: {
     contentType: string;
@@ -277,7 +278,7 @@ const parsePunctuationLines = (lines: string[]): UnifiedResponse['punctuationIss
         currentSentence: current.currentSentence || '',
         correctedSentence: current.correctedSentence || current.currentSentence || '',
         explanation: current.explanation || '',
-        position: current.position || 0
+        position: current.position ?? 0
       });
       current = {};
     }
@@ -417,7 +418,7 @@ const parseContentLines = (lines: string[]): UnifiedResponse['contentAnalysis'] 
 
   for (const line of lines) {
     const t = line.trim();
-    if (!t || t.startsWith('#')) continue;
+    if (!t || t.startsWith('#') || t.startsWith('@')) continue;
 
     const idx = t.indexOf(':');
     if (idx > 0) {
@@ -426,24 +427,39 @@ const parseContentLines = (lines: string[]): UnifiedResponse['contentAnalysis'] 
 
       switch (key) {
         case 'type':
+        case 'contenttype':
+        case 'ধরন':
+        case 'টাইপ':
           result.contentType = val;
           break;
         case 'desc':
         case 'description':
+        case 'বর্ণনা':
           result.description = val;
           break;
         case 'missing':
+        case 'missingelements':
+        case 'অনুপস্থিত':
           result.missingElements = val.split(',').map(s => s.trim()).filter(Boolean).slice(0, 5);
           break;
         case 'tips':
         case 'suggestions':
+        case 'পরামর্শ':
+        case 'সাজেশন':
           result.suggestions = val.split(',').map(s => s.trim()).filter(Boolean).slice(0, 5);
           break;
       }
     }
   }
 
-  return result.contentType ? result : null;
+  // যদি কোনো content থাকে তাহলে return করো
+  if (result.contentType || result.description || 
+      (result.missingElements && result.missingElements.length > 0) ||
+      (result.suggestions && result.suggestions.length > 0)) {
+    return result;
+  }
+
+  return null;
 };
 
 /**
