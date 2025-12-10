@@ -1,9 +1,9 @@
 // src/App.tsx
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 
 // ============ IMPORTS ============
 import { normalize } from './utils/normalize';
-import { analyzeText } from './utils/api';
+import { analyzeText, getRateLimitInfo, incrementRequestCount, MAX_DAILY_REQUESTS } from './utils/api';
 import { UnifiedResponse } from './utils/toonParser';
 import {
   getTextFromWord,
@@ -16,45 +16,50 @@ import {
 import {
   DOC_TYPE_CONFIG,
   getDocTypeLabel,
-  DocType
+  getToneName,
+  DocType,
+  StyleType,
+  MODEL_OPTIONS,
+  TONE_OPTIONS,
+  STYLE_OPTIONS
 } from './prompts/core';
 
 // ============ TYPE DEFINITIONS ============
-export interface Correction {
+interface Correction {
   wrong: string;
   suggestions: string[];
   position?: number;
 }
 
-export interface ToneSuggestion {
+interface ToneSuggestion {
   current: string;
   suggestion: string;
   reason: string;
   position?: number;
 }
 
-export interface StyleSuggestion {
+interface StyleSuggestion {
   current: string;
   suggestion: string;
   type: string;
   position?: number;
 }
 
-export interface StyleMixingCorrection {
+interface StyleMixingCorrection {
   current: string;
   suggestion: string;
   type: string;
   position?: number;
 }
 
-export interface StyleMixing {
+interface StyleMixing {
   detected: boolean;
   recommendedStyle?: string;
   reason?: string;
   corrections?: StyleMixingCorrection[];
 }
 
-export interface PunctuationIssue {
+interface PunctuationIssue {
   issue: string;
   currentSentence: string;
   correctedSentence: string;
@@ -62,14 +67,14 @@ export interface PunctuationIssue {
   position?: number;
 }
 
-export interface EuphonyImprovement {
+interface EuphonyImprovement {
   current: string;
   suggestions: string[];
   reason: string;
   position?: number;
 }
 
-export interface ContentAnalysis {
+interface ContentAnalysis {
   contentType: string;
   description?: string;
   missingElements?: string[];
@@ -78,21 +83,7 @@ export interface ContentAnalysis {
 
 type SectionKey = 'spelling' | 'tone' | 'style' | 'mixing' | 'punctuation' | 'euphony' | 'content';
 type ViewFilter = 'all' | 'spelling' | 'punctuation';
-
-// Tone name helper
-const getToneName = (tone: string): string => {
-  const map: Record<string, string> = {
-    'formal': '📋 আনুষ্ঠানিক',
-    'informal': '💬 অনানুষ্ঠানিক',
-    'professional': '💼 পেশাদার',
-    'friendly': '😊 বন্ধুত্বপূর্ণ',
-    'respectful': '🙏 সম্মানজনক',
-    'persuasive': '💪 প্রভাবশালী',
-    'neutral': '⚖️ নিরপেক্ষ',
-    'academic': '📚 শিক্ষামূলক'
-  };
-  return map[tone] || tone;
-};
+type ModalType = 'none' | 'settings' | 'instructions' | 'tone' | 'style' | 'doctype' | 'mainMenu';
 
 // ============ MAIN COMPONENT ============
 function App() {
@@ -105,13 +96,14 @@ function App() {
     (localStorage.getItem('doc_type') as DocType) || 'generic'
   );
 
+  // Rate Limit State
+  const [requestCount, setRequestCount] = useState(0);
+
   // UI State
   const [isLoading, setIsLoading] = useState(false);
   const [loadingText, setLoadingText] = useState('');
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
-  const [activeModal, setActiveModal] = useState<
-    'none' | 'settings' | 'instructions' | 'tone' | 'style' | 'doctype' | 'mainMenu'
-  >('none');
+  const [activeModal, setActiveModal] = useState<ModalType>('none');
 
   const [viewFilter, setViewFilter] = useState<ViewFilter>('all');
   const [collapsedSections, setCollapsedSections] = useState<Record<SectionKey, boolean>>({
@@ -126,7 +118,7 @@ function App() {
 
   // Selection State
   const [selectedTone, setSelectedTone] = useState('');
-  const [selectedStyle, setSelectedStyle] = useState<'none' | 'sadhu' | 'cholito'>('none');
+  const [selectedStyle, setSelectedStyle] = useState<StyleType>('none');
 
   // Data State
   const [corrections, setCorrections] = useState<Correction[]>([]);
@@ -141,6 +133,12 @@ function App() {
 
   // Debounce ref for highlight
   const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ============ LOAD REQUEST COUNT ON MOUNT ============
+  useEffect(() => {
+    const info = getRateLimitInfo();
+    setRequestCount(info.count);
+  }, []);
 
   // ============ HELPERS ============
   const showMessage = useCallback((text: string, type: 'success' | 'error') => {
@@ -190,9 +188,9 @@ function App() {
         return filtered.length > 0 ? { ...prev, corrections: filtered } : null;
       });
 
-      showMessage(`সংশোধিত হয়েছে ✓`, 'success');
+      showMessage('সংশোধিত হয়েছে ✓', 'success');
     } else {
-      showMessage(`শব্দটি ডকুমেন্টে খুঁজে পাওয়া যায়নি।`, 'error');
+      showMessage('শব্দটি ডকুমেন্টে খুঁজে পাওয়া যায়নি।', 'error');
     }
   }, [showMessage]);
 
@@ -263,12 +261,21 @@ function App() {
 
   // ============ MAIN API CALL - একটি মাত্র request ============
   const checkSpelling = useCallback(async () => {
+    // API Key check
     if (!apiKey) {
       showMessage('অনুগ্রহ করে প্রথমে API Key দিন', 'error');
       setActiveModal('settings');
       return;
     }
 
+    // Rate limit check
+    const currentInfo = getRateLimitInfo();
+    if (currentInfo.count >= MAX_DAILY_REQUESTS) {
+      showMessage(`দৈনিক সীমা (${MAX_DAILY_REQUESTS}টি) শেষ। কাল আবার চেষ্টা করুন।`, 'error');
+      return;
+    }
+
+    // Get text from Word
     const text = await getTextFromWord();
     if (!text || text.trim().length === 0) {
       showMessage('টেক্সট নির্বাচন করুন বা কার্সার রাখুন', 'error');
@@ -303,26 +310,30 @@ function App() {
         selectedModel
       );
 
+      // Increment request count after successful call
+      const newCount = incrementRequestCount();
+      setRequestCount(newCount);
+
       if (!result) {
         showMessage('বিশ্লেষণ ব্যর্থ হয়েছে। আবার চেষ্টা করুন।', 'error');
         return;
       }
 
-      // Sort by position
+      // Sort helper
       const sortByPos = <T extends { position?: number }>(arr: T[]) =>
-        arr.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+        [...arr].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
 
       // Set states
-      setCorrections(sortByPos([...result.spellingErrors]));
-      setPunctuationIssues(sortByPos([...result.punctuationIssues]));
-      setEuphonyImprovements(sortByPos([...result.euphonyImprovements]));
-      setToneSuggestions(sortByPos([...result.toneConversions]));
-      setStyleSuggestions(sortByPos([...result.styleConversions]));
+      setCorrections(sortByPos(result.spellingErrors));
+      setPunctuationIssues(sortByPos(result.punctuationIssues));
+      setEuphonyImprovements(sortByPos(result.euphonyImprovements));
+      setToneSuggestions(sortByPos(result.toneConversions));
+      setStyleSuggestions(sortByPos(result.styleConversions));
 
       if (result.languageStyleMixing?.detected) {
         const mixing = { ...result.languageStyleMixing };
         if (mixing.corrections) {
-          mixing.corrections = sortByPos([...mixing.corrections]);
+          mixing.corrections = sortByPos(mixing.corrections);
         }
         setLanguageStyleMixing(mixing);
       }
@@ -387,9 +398,24 @@ function App() {
 
         <div className="toolbar">
           <div className="toolbar-top">
-            <button onClick={checkSpelling} disabled={isLoading} className="btn-check">
+            <button 
+              onClick={checkSpelling} 
+              disabled={isLoading || requestCount >= MAX_DAILY_REQUESTS} 
+              className="btn-check"
+            >
               {isLoading ? '⏳ অপেক্ষা করুন...' : '🔍 পরীক্ষা করুন'}
             </button>
+          </div>
+
+          {/* Request Counter */}
+          <div className="request-counter" style={{
+            textAlign: 'center',
+            fontSize: '11px',
+            color: requestCount >= MAX_DAILY_REQUESTS - 2 ? '#dc2626' : '#6b7280',
+            marginTop: '6px'
+          }}>
+            আজকের Request: <strong>{requestCount}/{MAX_DAILY_REQUESTS}</strong>
+            {requestCount >= MAX_DAILY_REQUESTS && ' (সীমা শেষ)'}
           </div>
 
           <div className="toolbar-bottom">
@@ -436,7 +462,7 @@ function App() {
               </button>
             </span>
           )}
-          {docType && (
+          {docType !== 'generic' && (
             <span className="selection-tag doc-type-tag">
               📂 {getDocTypeLabel(docType)}
               <button onClick={() => setDocType('generic')} className="clear-btn">
@@ -849,8 +875,7 @@ function App() {
       </div>
 
       {/* ============ MODALS ============ */}
-      {/* (বাকি সব modal আগের মতোই - কোনো পরিবর্তন নেই) */}
-      
+
       {/* Main Menu Modal */}
       {activeModal === 'mainMenu' && (
         <div className="modal-overlay" onClick={() => setActiveModal('none')}>
@@ -896,7 +921,7 @@ function App() {
                 <div className="opt-icon">⚙️</div>
                 <div style={{ flex: 1 }}>
                   <div className="opt-title">সেটিংস</div>
-                  <div className="opt-desc">API Key, মডেল</div>
+                  <div className="opt-desc">API Key, মডেল নির্বাচন</div>
                 </div>
               </div>
 
@@ -928,24 +953,39 @@ function App() {
                 onChange={e => setApiKey(e.target.value)}
                 placeholder="আপনার API Key এখানে দিন"
               />
+              <p style={{ fontSize: '10px', color: '#6b7280', marginTop: '2px', marginBottom: '12px' }}>
+                <a 
+                  href="https://aistudio.google.com/app/apikey" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  style={{ color: '#667eea' }}
+                >
+                  API Key তৈরি করুন →
+                </a>
+              </p>
 
               <label>🤖 AI Model</label>
               <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)}>
-                <option value="gemini-2.5-flash">Gemini 2.5 Flash (রেকমেন্ডেড)</option>
-                <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
-                <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                {MODEL_OPTIONS.map(opt => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.name} - {opt.desc}
+                  </option>
+                ))}
               </select>
+              <p style={{ fontSize: '10px', color: '#dc2626', marginTop: '2px', marginBottom: '12px' }}>
+                ⚠️ Free tier: দৈনিক {MAX_DAILY_REQUESTS}টি request সীমা
+              </p>
 
               <label>📂 ডকুমেন্ট টাইপ (ডিফল্ট)</label>
               <select value={docType} onChange={e => setDocType(e.target.value as DocType)}>
-                <option value="generic">সাধারণ লেখা</option>
-                <option value="academic">একাডেমিক লেখা</option>
-                <option value="official">অফিশিয়াল চিঠি</option>
-                <option value="marketing">মার্কেটিং কপি</option>
-                <option value="social">সোশ্যাল মিডিয়া পোস্ট</option>
+                {Object.entries(DOC_TYPE_CONFIG).map(([key, cfg]) => (
+                  <option key={key} value={key}>
+                    {cfg.label}
+                  </option>
+                ))}
               </select>
 
-              <div style={{ display: 'flex', gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
                 <button onClick={saveSettings} className="btn-primary-full">
                   ✓ সংরক্ষণ
                 </button>
@@ -986,6 +1026,17 @@ function App() {
                 <li>🔍 "পরীক্ষা করুন" ক্লিক করুন</li>
                 <li>✓ সাজেশনে ক্লিক করে সংশোধন করুন</li>
               </ol>
+              <div style={{ 
+                marginTop: '16px', 
+                padding: '12px', 
+                background: '#fef3c7', 
+                borderRadius: '8px',
+                fontSize: '11px'
+              }}>
+                <strong>⚠️ সীমাবদ্ধতা:</strong><br/>
+                • দৈনিক সর্বোচ্চ {MAX_DAILY_REQUESTS}টি পরীক্ষা করা যাবে (Free tier)<br/>
+                • প্রতি মিনিটে ৫টি request
+              </div>
             </div>
           </div>
         </div>
@@ -1000,17 +1051,7 @@ function App() {
               <button onClick={() => setActiveModal('none')}>✕</button>
             </div>
             <div className="modal-body">
-              {[
-                { id: '', icon: '❌', title: 'কোনটি নয়', desc: 'শুধু বানান ও ব্যাকরণ পরীক্ষা' },
-                { id: 'formal', icon: '📋', title: 'আনুষ্ঠানিক', desc: 'দাপ্তরিক চিঠি, আবেদন' },
-                { id: 'informal', icon: '💬', title: 'অনানুষ্ঠানিক', desc: 'ব্যক্তিগত চিঠি, ব্লগ' },
-                { id: 'professional', icon: '💼', title: 'পেশাদার', desc: 'ব্যবসায়িক যোগাযোগ' },
-                { id: 'friendly', icon: '😊', title: 'বন্ধুত্বপূর্ণ', desc: 'উষ্ণ, আন্তরিক' },
-                { id: 'respectful', icon: '🙏', title: 'সম্মানজনক', desc: 'বয়োজ্যেষ্ঠদের জন্য' },
-                { id: 'persuasive', icon: '💪', title: 'প্রভাবশালী', desc: 'মার্কেটিং, বিক্রয়' },
-                { id: 'neutral', icon: '⚖️', title: 'নিরপেক্ষ', desc: 'সংবাদ, তথ্যমূলক' },
-                { id: 'academic', icon: '📚', title: 'শিক্ষামূলক', desc: 'গবেষণা পত্র' }
-              ].map(opt => (
+              {TONE_OPTIONS.map(opt => (
                 <div
                   key={opt.id}
                   className={`option-item ${selectedTone === opt.id ? 'selected' : ''}`}
@@ -1041,16 +1082,12 @@ function App() {
               <button onClick={() => setActiveModal('none')}>✕</button>
             </div>
             <div className="modal-body">
-              {[
-                { id: 'none', icon: '❌', title: 'কোনটি নয়', desc: 'স্বয়ংক্রিয় সনাক্তকরণ' },
-                { id: 'sadhu', icon: '📜', title: 'সাধু রীতি', desc: 'করিতেছি, তাহার' },
-                { id: 'cholito', icon: '💬', title: 'চলিত রীতি', desc: 'করছি, তার' }
-              ].map(opt => (
+              {STYLE_OPTIONS.map(opt => (
                 <div
                   key={opt.id}
                   className={`option-item ${selectedStyle === opt.id ? 'selected' : ''}`}
                   onClick={() => {
-                    setSelectedStyle(opt.id as 'none' | 'sadhu' | 'cholito');
+                    setSelectedStyle(opt.id as StyleType);
                     setActiveModal('none');
                   }}
                 >
@@ -1076,7 +1113,7 @@ function App() {
               <button onClick={() => setActiveModal('none')}>✕</button>
             </div>
             <div className="modal-body">
-              {(['generic', 'academic', 'official', 'marketing', 'social'] as DocType[]).map(dt => {
+              {(Object.keys(DOC_TYPE_CONFIG) as DocType[]).map(dt => {
                 const cfg = DOC_TYPE_CONFIG[dt];
                 return (
                   <div
