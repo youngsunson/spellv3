@@ -3,7 +3,12 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 
 // ============ IMPORTS ============
 import { normalize } from './utils/normalize';
-import { analyzeText, getRateLimitInfo, incrementRequestCount, MAX_DAILY_REQUESTS } from './utils/api';
+import { 
+  analyzeText, 
+  getRateLimitInfo, 
+  incrementRequestCount,
+  RateLimitInfo
+} from './utils/api';
 import { UnifiedResponse } from './utils/toonParser';
 import {
   getTextFromWord,
@@ -97,7 +102,7 @@ function App() {
   );
 
   // Rate Limit State
-  const [requestCount, setRequestCount] = useState(0);
+  const [rateLimitInfo, setRateLimitInfo] = useState<RateLimitInfo | null>(null);
 
   // UI State
   const [isLoading, setIsLoading] = useState(false);
@@ -134,11 +139,11 @@ function App() {
   // Debounce ref for highlight
   const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ============ LOAD REQUEST COUNT ON MOUNT ============
+  // ============ LOAD RATE LIMIT ON MOUNT & MODEL CHANGE ============
   useEffect(() => {
-    const info = getRateLimitInfo();
-    setRequestCount(info.count);
-  }, []);
+    const info = getRateLimitInfo(selectedModel);
+    setRateLimitInfo(info);
+  }, [selectedModel]);
 
   // ============ HELPERS ============
   const showMessage = useCallback((text: string, type: 'success' | 'error') => {
@@ -269,9 +274,9 @@ function App() {
     }
 
     // Rate limit check
-    const currentInfo = getRateLimitInfo();
-    if (currentInfo.count >= MAX_DAILY_REQUESTS) {
-      showMessage(`দৈনিক সীমা (${MAX_DAILY_REQUESTS}টি) শেষ। কাল আবার চেষ্টা করুন।`, 'error');
+    const currentInfo = getRateLimitInfo(selectedModel);
+    if (currentInfo.isLimited) {
+      showMessage(`দৈনিক সীমা (${currentInfo.limit}টি) শেষ। কাল আবার চেষ্টা করুন বা অন্য মডেল ব্যবহার করুন।`, 'error');
       return;
     }
 
@@ -311,8 +316,8 @@ function App() {
       );
 
       // Increment request count after successful call
-      const newCount = incrementRequestCount();
-      setRequestCount(newCount);
+      const newInfo = incrementRequestCount(selectedModel);
+      setRateLimitInfo(newInfo);
 
       if (!result) {
         showMessage('বিশ্লেষণ ব্যর্থ হয়েছে। আবার চেষ্টা করুন।', 'error');
@@ -359,6 +364,9 @@ function App() {
 
     } catch (error: any) {
       console.error(error);
+      // Update rate limit info in case of 429 error
+      const updatedInfo = getRateLimitInfo(selectedModel);
+      setRateLimitInfo(updatedInfo);
       showMessage(error?.message || 'ত্রুটি হয়েছে। আবার চেষ্টা করুন।', 'error');
     } finally {
       setIsLoading(false);
@@ -400,23 +408,43 @@ function App() {
           <div className="toolbar-top">
             <button 
               onClick={checkSpelling} 
-              disabled={isLoading || requestCount >= MAX_DAILY_REQUESTS} 
+              disabled={isLoading || (rateLimitInfo?.isLimited ?? false)} 
               className="btn-check"
             >
               {isLoading ? '⏳ অপেক্ষা করুন...' : '🔍 পরীক্ষা করুন'}
             </button>
           </div>
 
-          {/* Request Counter */}
-          <div className="request-counter" style={{
-            textAlign: 'center',
-            fontSize: '11px',
-            color: requestCount >= MAX_DAILY_REQUESTS - 2 ? '#dc2626' : '#6b7280',
-            marginTop: '6px'
-          }}>
-            আজকের Request: <strong>{requestCount}/{MAX_DAILY_REQUESTS}</strong>
-            {requestCount >= MAX_DAILY_REQUESTS && ' (সীমা শেষ)'}
-          </div>
+          {/* Dynamic Request Counter */}
+          {rateLimitInfo && (
+            <div 
+              className="request-counter" 
+              style={{
+                textAlign: 'center',
+                fontSize: '11px',
+                color: rateLimitInfo.remaining <= 3 ? '#dc2626' : '#6b7280',
+                marginTop: '6px',
+                padding: '4px 8px',
+                background: rateLimitInfo.isLimited ? '#fee2e2' : '#f3f4f6',
+                borderRadius: '6px'
+              }}
+            >
+              <span style={{ fontWeight: 600 }}>
+                {rateLimitInfo.count}/{rateLimitInfo.limit}
+              </span>
+              {' '}ব্যবহৃত
+              {rateLimitInfo.remaining > 0 && (
+                <span style={{ color: '#16a34a', marginLeft: '8px' }}>
+                  ({rateLimitInfo.remaining}টি বাকি)
+                </span>
+              )}
+              {rateLimitInfo.isLimited && (
+                <span style={{ color: '#dc2626', display: 'block', marginTop: '2px' }}>
+                  ⚠️ আজকের সীমা শেষ
+                </span>
+              )}
+            </div>
+          )}
 
           <div className="toolbar-bottom">
             <div className="view-filter">
@@ -896,7 +924,7 @@ function App() {
               </div>
 
               <div className="option-item" onClick={() => setActiveModal('style')}>
-                <div className="opt-icon">📝</div>
+                <div className="opt-icon">����</div>
                 <div style={{ flex: 1 }}>
                   <div className="opt-title">ভাষারীতি (সাধু / চলিত)</div>
                   <div className="opt-desc">
@@ -946,6 +974,7 @@ function App() {
               <button onClick={() => setActiveModal('none')}>✕</button>
             </div>
             <div className="modal-body">
+              {/* API Key */}
               <label>🔑 Google Gemini API Key</label>
               <input
                 type="password"
@@ -964,23 +993,68 @@ function App() {
                 </a>
               </p>
 
+              {/* Model Selection with Dynamic Info */}
               <label>🤖 AI Model</label>
-              <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)}>
-                {MODEL_OPTIONS.map(opt => (
-                  <option key={opt.id} value={opt.id}>
-                    {opt.name} - {opt.desc}
-                  </option>
-                ))}
-              </select>
-              <p style={{ fontSize: '10px', color: '#dc2626', marginTop: '2px', marginBottom: '12px' }}>
-                ⚠️ Free tier: দৈনিক {MAX_DAILY_REQUESTS}টি request সীমা
-              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+                {MODEL_OPTIONS.map(opt => {
+                  const modelInfo = getRateLimitInfo(opt.id);
+                  return (
+                    <div
+                      key={opt.id}
+                      onClick={() => setSelectedModel(opt.id)}
+                      style={{
+                        padding: '10px 12px',
+                        border: selectedModel === opt.id ? '2px solid #667eea' : '1px solid #e5e7eb',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        background: selectedModel === opt.id ? '#eef2ff' : 'white',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: '13px' }}>
+                            {opt.name}
+                            {opt.badge && (
+                              <span style={{ 
+                                marginLeft: '6px', 
+                                fontSize: '10px', 
+                                background: '#fef3c7', 
+                                padding: '2px 6px', 
+                                borderRadius: '4px' 
+                              }}>
+                                {opt.badge}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '10px', color: '#6b7280', marginTop: '2px' }}>
+                            {opt.desc} • দৈনিক {opt.rpd}টি
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ 
+                            fontSize: '11px', 
+                            fontWeight: 600,
+                            color: modelInfo.isLimited ? '#dc2626' : '#16a34a'
+                          }}>
+                            {modelInfo.remaining}/{modelInfo.limit}
+                          </div>
+                          <div style={{ fontSize: '9px', color: '#6b7280' }}>
+                            বাকি
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
 
+              {/* Document Type */}
               <label>📂 ডকুমেন্ট টাইপ (ডিফল্ট)</label>
               <select value={docType} onChange={e => setDocType(e.target.value as DocType)}>
-                {Object.entries(DOC_TYPE_CONFIG).map(([key, cfg]) => (
+                {(Object.keys(DOC_TYPE_CONFIG) as DocType[]).map(key => (
                   <option key={key} value={key}>
-                    {cfg.label}
+                    {DOC_TYPE_CONFIG[key].label}
                   </option>
                 ))}
               </select>
@@ -1033,9 +1107,10 @@ function App() {
                 borderRadius: '8px',
                 fontSize: '11px'
               }}>
-                <strong>⚠️ সীমাবদ্ধতা:</strong><br/>
-                • দৈনিক সর্বোচ্চ {MAX_DAILY_REQUESTS}টি পরীক্ষা করা যাবে (Free tier)<br/>
-                • প্রতি মিনিটে ৫টি request
+                <strong>⚠️ মডেল অনুযায়ী দৈনিক সীমা:</strong><br/>
+                • Gemini 2.5 Flash: ~18টি request<br/>
+                • Gemini 2.5 Flash Lite: ~18টি request<br/>
+                • Gemini 2.0 Flash: ~1350টি request
               </div>
             </div>
           </div>
