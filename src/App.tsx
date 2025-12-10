@@ -1147,17 +1147,6 @@ if (result.languageStyleMixing?.detected) {
                   );
                 })}
               </div>
-
-              {/* Document Type */}
-              <label>📂 ডকুমেন্ট টাইপ (ডিফল্ট)</label>
-              <select value={docType} onChange={e => setDocType(e.target.value as DocType)}>
-                {Object.entries(DOC_TYPE_CONFIG).map(([key, cfg]) => (
-                  <option key={key} value={key}>
-                    {cfg.label}
-                  </option>
-                ))}
-              </select>
-
               <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
                 <button onClick={saveSettings} className="btn-primary-full">
                   ✓ সংরক্ষণ
