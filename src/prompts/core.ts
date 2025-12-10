@@ -6,6 +6,11 @@
 export type DocType = 'generic' | 'academic' | 'official' | 'marketing' | 'social';
 
 /**
+ * স্টাইল টাইপ
+ */
+export type StyleType = 'none' | 'sadhu' | 'cholito';
+
+/**
  * ডকুমেন্ট টাইপ কনফিগ ইন্টারফেস
  */
 export interface DocTypeConfig {
@@ -36,7 +41,7 @@ export const DOC_TYPE_CONFIG: { [key in DocType]: DocTypeConfig } = {
   },
   official: {
     label: 'অফিশিয়াল চিঠি',
-    description: 'দাপ্তরিক আবেদন, নোটিশ, অফিসিয়াল ইমেইল ইত্যাদি।',
+    description: 'দাপ্তরি�� আবেদন, নোটিশ, অফিসিয়াল ইমেইল ইত্যাদি।',
     defaultTone: 'formal',
     mainHint: 'এটি একটি অফিসিয়াল/দাপ্তরিক লেখা হিসেবে বিবেচনা করুন। ভদ্রতা, সম্মানসূচক সম্বোধন ও স্পষ্টতা গুরুত্ব দিন।',
     contentHint: 'অফিশিয়াল লেখায় প্রাপক, বিষয়, উদ্দেশ্য, প্রয়োজনীয় তথ্য ও বিনীত উপসংহার আছে কি না দেখুন।'
@@ -80,18 +85,55 @@ export const getToneName = (tone: string): string => {
 };
 
 /**
- * Model Options
+ * Model Options with limits info
  */
-export const MODEL_OPTIONS = [
-  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', desc: 'সেরা মান (প্রস্তাবিত)' },
-  { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', desc: 'দ্রুত, হালকা' },
-  { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', desc: 'স্থিতিশীল' }
+export interface ModelOption {
+  id: string;
+  name: string;
+  desc: string;
+  rpm: number;
+  rpd: number;
+  badge: string;
+}
+
+export const MODEL_OPTIONS: ModelOption[] = [
+  { 
+    id: 'gemini-2.5-flash', 
+    name: 'Gemini 2.5 Flash', 
+    desc: 'সেরা মান',
+    rpm: 5,
+    rpd: 20,
+    badge: '⭐ প্রস্তাবিত'
+  },
+  { 
+    id: 'gemini-2.5-flash-lite', 
+    name: 'Gemini 2.5 Flash Lite', 
+    desc: 'দ্রুত',
+    rpm: 10,
+    rpd: 20,
+    badge: '⚡ দ্রুত'
+  },
+  { 
+    id: 'gemini-2.0-flash', 
+    name: 'Gemini 2.0 Flash', 
+    desc: 'বেশি limit',
+    rpm: 15,
+    rpd: 1500,
+    badge: '🔓 1500/day'
+  }
 ];
 
 /**
  * Tone Options
  */
-export const TONE_OPTIONS = [
+export interface ToneOption {
+  id: string;
+  icon: string;
+  title: string;
+  desc: string;
+}
+
+export const TONE_OPTIONS: ToneOption[] = [
   { id: '', icon: '❌', title: 'কোনটি নয়', desc: 'শুধু বানান ও ব্যাকরণ পরীক্ষা' },
   { id: 'formal', icon: '📋', title: 'আনুষ্ঠানিক', desc: 'দাপ্তরিক চিঠি, আবেদন' },
   { id: 'informal', icon: '💬', title: 'অনানুষ্ঠানিক', desc: 'ব্যক্তিগত চিঠি, ব্লগ' },
@@ -106,10 +148,15 @@ export const TONE_OPTIONS = [
 /**
  * Style Options
  */
-export const STYLE_OPTIONS = [
+export interface StyleOption {
+  id: StyleType;
+  icon: string;
+  title: string;
+  desc: string;
+}
+
+export const STYLE_OPTIONS: StyleOption[] = [
   { id: 'none', icon: '❌', title: 'কোনটি নয়', desc: 'স্বয়ংক্রিয় সনাক্তকরণ' },
   { id: 'sadhu', icon: '📜', title: 'সাধু রীতি', desc: 'করিতেছি, তাহার' },
   { id: 'cholito', icon: '💬', title: 'চলিত রীতি', desc: 'করছি, তার' }
 ];
-
-export type StyleType = 'none' | 'sadhu' | 'cholito';
