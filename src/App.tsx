@@ -7,7 +7,8 @@ import {
   analyzeText, 
   getRateLimitInfo, 
   incrementRequestCount,
-  RateLimitInfo
+  RateLimitInfo,
+  getSafeLimit
 } from './utils/api';
 import { UnifiedResponse } from './utils/toonParser';
 import {
@@ -89,6 +90,87 @@ interface ContentAnalysis {
 type SectionKey = 'spelling' | 'tone' | 'style' | 'mixing' | 'punctuation' | 'euphony' | 'content';
 type ViewFilter = 'all' | 'spelling' | 'punctuation';
 type ModalType = 'none' | 'settings' | 'instructions' | 'tone' | 'style' | 'doctype' | 'mainMenu';
+
+// ============ DEDUPLICATION HELPERS ============
+/**
+ * ডুপ্লিকেট বানান ভুল রিমুভ করা
+ */
+const deduplicateCorrections = (items: Correction[]): Correction[] => {
+  const seen = new Map<string, Correction>();
+  
+  for (const item of items) {
+    const key = normalize(item.wrong);
+    if (!seen.has(key)) {
+      seen.set(key, item);
+    }
+  }
+  
+  return Array.from(seen.values());
+};
+
+/**
+ * ডুপ্লিকেট টোন সাজেশন রিমুভ করা
+ */
+const deduplicateToneSuggestions = (items: ToneSuggestion[]): ToneSuggestion[] => {
+  const seen = new Map<string, ToneSuggestion>();
+  
+  for (const item of items) {
+    const key = normalize(item.current);
+    if (!seen.has(key)) {
+      seen.set(key, item);
+    }
+  }
+  
+  return Array.from(seen.values());
+};
+
+/**
+ * ডুপ্লিকেট স্টাইল সাজেশন রিমুভ করা
+ */
+const deduplicateStyleSuggestions = (items: StyleSuggestion[]): StyleSuggestion[] => {
+  const seen = new Map<string, StyleSuggestion>();
+  
+  for (const item of items) {
+    const key = normalize(item.current);
+    if (!seen.has(key)) {
+      seen.set(key, item);
+    }
+  }
+  
+  return Array.from(seen.values());
+};
+
+/**
+ * ডুপ্লিকেট ইউফোনি সাজেশন রিমুভ করা
+ */
+const deduplicateEuphony = (items: EuphonyImprovement[]): EuphonyImprovement[] => {
+  const seen = new Map<string, EuphonyImprovement>();
+  
+  for (const item of items) {
+    const key = normalize(item.current);
+    if (!seen.has(key)) {
+      seen.set(key, item);
+    }
+  }
+  
+  return Array.from(seen.values());
+};
+
+/**
+ * ডুপ্লিকেট মিক্সিং কারেকশন রিমুভ করা
+ */
+const deduplicateMixingCorrections = (items: StyleMixingCorrection[]): StyleMixingCorrection[] => {
+  const seen = new Map<string, StyleMixingCorrection>();
+  
+  for (const item of items) {
+    const key = normalize(item.current);
+    if (!seen.has(key)) {
+      seen.set(key, item);
+    }
+  }
+  
+  return Array.from(seen.values());
+};
 
 // ============ MAIN COMPONENT ============
 function App() {
@@ -328,17 +410,22 @@ function App() {
       const sortByPos = <T extends { position?: number }>(arr: T[]) =>
         [...arr].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
 
-      // Set states
-      setCorrections(sortByPos(result.spellingErrors));
+      // ✅ Deduplicate and set states
+      const dedupedSpelling = deduplicateCorrections(result.spellingErrors);
+      const dedupedTone = deduplicateToneSuggestions(result.toneConversions);
+      const dedupedStyle = deduplicateStyleSuggestions(result.styleConversions);
+      const dedupedEuphony = deduplicateEuphony(result.euphonyImprovements);
+
+      setCorrections(sortByPos(dedupedSpelling));
       setPunctuationIssues(sortByPos(result.punctuationIssues));
-      setEuphonyImprovements(sortByPos(result.euphonyImprovements));
-      setToneSuggestions(sortByPos(result.toneConversions));
-      setStyleSuggestions(sortByPos(result.styleConversions));
+      setEuphonyImprovements(sortByPos(dedupedEuphony));
+      setToneSuggestions(sortByPos(dedupedTone));
+      setStyleSuggestions(sortByPos(dedupedStyle));
 
       if (result.languageStyleMixing?.detected) {
         const mixing = { ...result.languageStyleMixing };
         if (mixing.corrections) {
-          mixing.corrections = sortByPos(mixing.corrections);
+          mixing.corrections = sortByPos(deduplicateMixingCorrections(mixing.corrections));
         }
         setLanguageStyleMixing(mixing);
       }
@@ -347,9 +434,9 @@ function App() {
         setContentAnalysis(result.contentAnalysis);
       }
 
-      // Calculate stats
+      // Calculate stats (using deduplicated count)
       const words = text.trim().split(/\s+/).filter(Boolean).length;
-      const errors = result.spellingErrors.length;
+      const errors = dedupedSpelling.length;
       setStats({
         totalWords: words,
         errorCount: errors,
@@ -596,7 +683,7 @@ function App() {
             {!collapsedSections.spelling &&
               corrections.map((c, i) => (
                 <div
-                  key={i}
+                  key={`spell-${i}-${c.wrong}`}
                   className="suggestion-card error-card"
                   style={{ position: 'relative' }}
                   onMouseEnter={() => handleHighlight(c.wrong, '#fee2e2', c.position)}
@@ -638,7 +725,7 @@ function App() {
             {!collapsedSections.tone &&
               toneSuggestions.map((t, i) => (
                 <div
-                  key={i}
+                  key={`tone-${i}-${t.current}`}
                   className="suggestion-card warning-card"
                   style={{ position: 'relative' }}
                   onMouseEnter={() => handleHighlight(t.current, '#fef3c7', t.position)}
@@ -684,7 +771,7 @@ function App() {
             {!collapsedSections.style &&
               styleSuggestions.map((s, i) => (
                 <div
-                  key={i}
+                  key={`style-${i}-${s.current}`}
                   className="suggestion-card info-card"
                   style={{
                     borderColor: selectedStyle === 'sadhu' ? '#fbbf24' : '#5eead4',
@@ -768,7 +855,7 @@ function App() {
                 </div>
                 {languageStyleMixing.corrections?.map((c, i) => (
                   <div
-                    key={i}
+                    key={`mix-${i}-${c.current}`}
                     className="suggestion-card purple-card-light"
                     style={{ position: 'relative' }}
                     onMouseEnter={() => handleHighlight(c.current, '#e9d5ff', c.position)}
@@ -824,7 +911,7 @@ function App() {
             {!collapsedSections.punctuation &&
               punctuationIssues.map((p, i) => (
                 <div
-                  key={i}
+                  key={`punct-${i}`}
                   className="suggestion-card orange-card"
                   style={{ position: 'relative' }}
                   onMouseEnter={() => handleHighlight(p.currentSentence, '#ffedd5')}
@@ -864,7 +951,7 @@ function App() {
             {!collapsedSections.euphony &&
               euphonyImprovements.map((e, i) => (
                 <div
-                  key={i}
+                  key={`euph-${i}-${e.current}`}
                   className="suggestion-card"
                   style={{ borderLeft: '4px solid #db2777', position: 'relative' }}
                   onMouseEnter={() => handleHighlight(e.current, '#fce7f3', e.position)}
@@ -995,9 +1082,10 @@ function App() {
 
               {/* Model Selection with Dynamic Info */}
               <label>🤖 AI Model</label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
                 {MODEL_OPTIONS.map(opt => {
                   const modelInfo = getRateLimitInfo(opt.id);
+                  const safeLimit = getSafeLimit(opt.id);
                   return (
                     <div
                       key={opt.id}
@@ -1037,7 +1125,7 @@ function App() {
                             fontWeight: 600,
                             color: modelInfo.isLimited ? '#dc2626' : '#16a34a'
                           }}>
-                            {modelInfo.remaining}/{modelInfo.limit}
+                            {modelInfo.remaining}/{safeLimit}
                           </div>
                           <div style={{ fontSize: '9px', color: '#6b7280' }}>
                             বাকি
@@ -1048,6 +1136,16 @@ function App() {
                   );
                 })}
               </div>
+
+              {/* Document Type */}
+              <label>📂 ডকুমেন্ট টাইপ (ডিফল্ট)</label>
+              <select value={docType} onChange={e => setDocType(e.target.value as DocType)}>
+                {Object.entries(DOC_TYPE_CONFIG).map(([key, cfg]) => (
+                  <option key={key} value={key}>
+                    {cfg.label}
+                  </option>
+                ))}
+              </select>
 
               <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
                 <button onClick={saveSettings} className="btn-primary-full">
@@ -1097,10 +1195,9 @@ function App() {
                 borderRadius: '8px',
                 fontSize: '11px'
               }}>
-                <strong>⚠️ মডেল অনুযায়ী দৈনিক সীমা:</strong><br/>
-                • Gemini 2.5 Flash: ~18টি request<br/>
-                • Gemini 2.5 Flash Lite: ~18টি request<br/>
-                • Gemini 2.0 Flash: ~1350টি request
+                <strong>💡 টিপস:</strong><br/>
+                • <strong>Gemini 2.5 Flash</strong> সবচেয়ে ভালো কাজ করে (প্রস্তাবিত)<br/>
+                • <strong>Gemini 2.0 Flash</strong> এ দৈনিক 1350টি পর্যন্ত request করা যায়
               </div>
             </div>
           </div>
