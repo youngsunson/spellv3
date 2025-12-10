@@ -2,7 +2,6 @@
 
 /**
  * Unified Response Interface
- * position optional রাখা হয়েছে App.tsx এর সাথে compatibility এর জন্য
  */
 export interface UnifiedResponse {
   spellingErrors: Array<{
@@ -94,18 +93,14 @@ const validateSpellingErrors = (
   errors: UnifiedResponse['spellingErrors'],
   maxAllowed: number
 ): UnifiedResponse['spellingErrors'] => {
-  // Remove duplicates
   const unique = removeDuplicates(errors, item => item.wrong);
-  
-  // Limit to maxAllowed
   const limited = unique.slice(0, maxAllowed);
   
-  // Filter out suspicious entries (empty, too short, numbers, English)
   const filtered = limited.filter(err => {
     const word = err.wrong.trim();
     if (!word || word.length < 2) return false;
-    if (/^\d+$/.test(word)) return false; // Pure numbers
-    if (/^[a-zA-Z]+$/.test(word)) return false; // Pure English
+    if (/^\d+$/.test(word)) return false;
+    if (/^[a-zA-Z]+$/.test(word)) return false;
     if (err.suggestions.length === 0) return false;
     return true;
   });
@@ -127,50 +122,62 @@ export const parseUnifiedToon = (raw: string, wordCount?: number): UnifiedRespon
     contentAnalysis: null
   };
 
+  // Debug log
+  console.log('🔍 Raw TOON Response:', raw.substring(0, 1000));
+
   // @ দিয়ে sections আলাদা করা
   const sections = raw.split(/^@/m).filter(s => s.trim());
+
+  console.log('📦 Found sections:', sections.length);
 
   for (const section of sections) {
     const lines = section.trim().split('\n');
     const header = lines[0].trim().toUpperCase();
     const content = lines.slice(1);
 
+    console.log(`📌 Parsing section: ${header}, lines: ${content.length}`);
+
     switch (header) {
       case 'SPELLING':
         result.spellingErrors = parseSpellingLines(content);
+        console.log('  ✅ Spelling errors:', result.spellingErrors.length);
         break;
 
       case 'MIXING':
         result.languageStyleMixing = parseMixingLines(content);
+        console.log('  ✅ Mixing detected:', result.languageStyleMixing.detected);
         break;
 
       case 'PUNCTUATION':
         result.punctuationIssues = parsePunctuationLines(content);
+        console.log('  ✅ Punctuation issues:', result.punctuationIssues.length);
         break;
 
       case 'EUPHONY':
         result.euphonyImprovements = parseEuphonyLines(content);
+        console.log('  ✅ Euphony improvements:', result.euphonyImprovements.length);
         break;
 
       case 'STYLE':
         result.styleConversions = parseStyleLines(content);
+        console.log('  ✅ Style conversions:', result.styleConversions.length);
         break;
 
       case 'TONE':
         result.toneConversions = parseToneLines(content);
+        console.log('  ✅ Tone conversions:', result.toneConversions.length);
         break;
 
       case 'CONTENT':
         result.contentAnalysis = parseContentLines(content);
+        console.log('  ✅ Content analysis:', result.contentAnalysis?.contentType);
         break;
     }
   }
 
-  // Validate and deduplicate spelling errors
+  // Validate and deduplicate
   const maxErrors = wordCount ? Math.min(50, Math.ceil(wordCount * 0.5)) : 50;
   result.spellingErrors = validateSpellingErrors(result.spellingErrors, maxErrors);
-
-  // Deduplicate other sections
   result.toneConversions = removeDuplicates(result.toneConversions, item => item.current);
   result.styleConversions = removeDuplicates(result.styleConversions, item => item.current);
   result.euphonyImprovements = removeDuplicates(result.euphonyImprovements, item => item.current);
@@ -187,7 +194,6 @@ export const parseUnifiedToon = (raw: string, wordCount?: number): UnifiedRespon
 
 /**
  * Parse SPELLING section
- * Format: ভুল|সঠিক১,সঠিক২|pos
  */
 const parseSpellingLines = (lines: string[]): UnifiedResponse['spellingErrors'] => {
   const results: UnifiedResponse['spellingErrors'] = [];
@@ -202,10 +208,7 @@ const parseSpellingLines = (lines: string[]): UnifiedResponse['spellingErrors'] 
       const suggestions = parts[1].split(',').map(s => s.trim()).filter(Boolean);
       const position = parseInt(parts[2]) || 0;
       
-      // Skip if wrong word is empty or too short
       if (wrong.length < 2) continue;
-      
-      // Skip if no valid suggestions
       if (suggestions.length === 0) continue;
       
       results.push({ wrong, suggestions, position });
@@ -227,7 +230,7 @@ const parseMixingLines = (lines: string[]): UnifiedResponse['languageStyleMixing
     const t = line.trim();
     if (!t || t.startsWith('#')) continue;
 
-    if (t.toUpperCase() === 'CORRECTIONS' || t.toUpperCase() === '@CORRECTIONS') {
+    if (t.toUpperCase() === 'CORRECTIONS' || t.toUpperCase().includes('CORRECTIONS')) {
       inCorrections = true;
       continue;
     }
@@ -265,16 +268,18 @@ const parseMixingLines = (lines: string[]): UnifiedResponse['languageStyleMixing
 };
 
 /**
- * Parse PUNCTUATION section
+ * Parse PUNCTUATION section - উন্নত parser
  */
 const parsePunctuationLines = (lines: string[]): UnifiedResponse['punctuationIssues'] => {
   const issues: UnifiedResponse['punctuationIssues'] = [];
   let current: Partial<UnifiedResponse['punctuationIssues'][0]> = {};
 
+  console.log('  🔸 Parsing punctuation lines:', lines.length);
+
   const pushCurrent = () => {
     if (current.issue || current.currentSentence) {
       issues.push({
-        issue: current.issue || '',
+        issue: current.issue || 'বিরাম চিহ্ন সমস্যা',
         currentSentence: current.currentSentence || '',
         correctedSentence: current.correctedSentence || current.currentSentence || '',
         explanation: current.explanation || '',
@@ -287,32 +292,43 @@ const parsePunctuationLines = (lines: string[]): UnifiedResponse['punctuationIss
   for (const line of lines) {
     const t = line.trim();
     
-    if (t === '---') {
+    // Separator
+    if (t === '---' || t === '---' || t.match(/^-{3,}$/)) {
       pushCurrent();
       continue;
     }
     
     if (!t || t.startsWith('#')) continue;
 
+    // Key:Value parsing
     const idx = t.indexOf(':');
     if (idx > 0) {
       const key = t.substring(0, idx).toLowerCase().trim();
       const val = t.substring(idx + 1).trim();
 
+      console.log(`    📍 Punct key: "${key}", val: "${val.substring(0, 30)}..."`);
+
       switch (key) {
         case 'issue':
+        case 'সমস্যা':
           current.issue = val;
           break;
         case 'cur':
         case 'current':
+        case 'বর্তমান':
+        case 'currentsentence':
           current.currentSentence = val;
           break;
         case 'fix':
+        case 'fixed':
         case 'corrected':
+        case 'সংশোধিত':
+        case 'correctedsentence':
           current.correctedSentence = val;
           break;
         case 'exp':
         case 'explanation':
+        case 'ব্যাখ্যা':
           current.explanation = val;
           break;
         case 'pos':
@@ -323,48 +339,57 @@ const parsePunctuationLines = (lines: string[]): UnifiedResponse['punctuationIss
     }
   }
   
+  // Push last item
   pushCurrent();
+
+  console.log('  🔸 Total punctuation issues found:', issues.length);
   
-  // Limit punctuation issues
-  return issues.slice(0, 10);
+  return issues.slice(0, 15);
 };
 
 /**
- * Parse EUPHONY section
- * Format: শব্দ|বিকল্প১,বিকল্প২|কারণ|pos
+ * Parse EUPHONY section - উন্নত parser
  */
 const parseEuphonyLines = (lines: string[]): UnifiedResponse['euphonyImprovements'] => {
   const results: UnifiedResponse['euphonyImprovements'] = [];
+
+  console.log('  🔹 Parsing euphony lines:', lines.length);
   
   for (const line of lines) {
     const t = line.trim();
-    if (!t || t.startsWith('#') || !t.includes('|')) continue;
+    if (!t || t.startsWith('#') || t.startsWith('উদাহরণ') || t.startsWith('ফরম্যাট')) continue;
     
-    const parts = t.split('|').map(p => p.trim());
-    if (parts.length >= 4 && parts[0] && parts[1]) {
-      results.push({
-        current: parts[0],
-        suggestions: parts[1].split(',').map(s => s.trim()).filter(Boolean),
-        reason: parts[2] || '',
-        position: parseInt(parts[3]) || 0
-      });
+    // Pipe format: শব্দ|বিকল্প|কারণ|pos
+    if (t.includes('|')) {
+      const parts = t.split('|').map(p => p.trim());
+      if (parts.length >= 3 && parts[0] && parts[1]) {
+        const current = parts[0];
+        const suggestions = parts[1].split(',').map(s => s.trim()).filter(Boolean);
+        const reason = parts[2] || 'উন্নত শব্দচয়ন';
+        const position = parts[3] ? parseInt(parts[3]) || 0 : 0;
+
+        if (current.length >= 2 && suggestions.length > 0) {
+          results.push({ current, suggestions, reason, position });
+          console.log(`    📍 Euphony: "${current}" → "${suggestions.join(', ')}"`);
+        }
+      }
     }
   }
+
+  console.log('  🔹 Total euphony improvements found:', results.length);
   
-  // Limit euphony improvements
   return results.slice(0, 10);
 };
 
 /**
  * Parse STYLE section
- * Format: বর্তমান|সংশোধিত|টাইপ|pos
  */
 const parseStyleLines = (lines: string[]): UnifiedResponse['styleConversions'] => {
   const results: UnifiedResponse['styleConversions'] = [];
   
   for (const line of lines) {
     const t = line.trim();
-    if (!t || t.startsWith('#') || !t.includes('|')) continue;
+    if (!t || t.startsWith('#') || t.startsWith('ফরম্যাট') || t.startsWith('উদাহরণ') || !t.includes('|')) continue;
     
     const parts = t.split('|').map(p => p.trim());
     if (parts.length >= 4 && parts[0] && parts[1]) {
@@ -382,14 +407,13 @@ const parseStyleLines = (lines: string[]): UnifiedResponse['styleConversions'] =
 
 /**
  * Parse TONE section
- * Format: বর্তমান|সংশোধিত|কারণ|pos
  */
 const parseToneLines = (lines: string[]): UnifiedResponse['toneConversions'] => {
   const results: UnifiedResponse['toneConversions'] = [];
   
   for (const line of lines) {
     const t = line.trim();
-    if (!t || t.startsWith('#') || !t.includes('|')) continue;
+    if (!t || t.startsWith('#') || t.startsWith('ফরম্যাট') || t.startsWith('উদাহরণ') || !t.includes('|')) continue;
     
     const parts = t.split('|').map(p => p.trim());
     if (parts.length >= 4 && parts[0] && parts[1]) {
@@ -452,7 +476,6 @@ const parseContentLines = (lines: string[]): UnifiedResponse['contentAnalysis'] 
     }
   }
 
-  // যদি কোনো content থাকে তাহলে return করো
   if (result.contentType || result.description || 
       (result.missingElements && result.missingElements.length > 0) ||
       (result.suggestions && result.suggestions.length > 0)) {
@@ -468,6 +491,8 @@ const parseContentLines = (lines: string[]): UnifiedResponse['contentAnalysis'] 
 export const parseAIResponse = (raw: string, wordCount?: number): UnifiedResponse | null => {
   const trimmed = raw.trim();
   
+  console.log('🔄 Parsing AI Response, length:', trimmed.length);
+  
   // TOON format check
   if (
     trimmed.includes('@SPELLING') || 
@@ -478,11 +503,13 @@ export const parseAIResponse = (raw: string, wordCount?: number): UnifiedRespons
     trimmed.includes('@EUPHONY') ||
     trimmed.includes('@CONTENT')
   ) {
+    console.log('✅ Detected TOON format');
     return parseUnifiedToon(trimmed, wordCount);
   }
 
-  // JSON fallback (backward compatibility)
+  // JSON fallback
   try {
+    console.log('⚠️ Trying JSON fallback');
     let cleaned = trimmed;
     if (cleaned.startsWith('```')) {
       cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
@@ -499,13 +526,12 @@ export const parseAIResponse = (raw: string, wordCount?: number): UnifiedRespons
       contentAnalysis: json.contentAnalysis || null
     };
 
-    // Apply validation
     const maxErrors = wordCount ? Math.min(50, Math.ceil(wordCount * 0.5)) : 50;
     result.spellingErrors = validateSpellingErrors(result.spellingErrors, maxErrors);
     
     return result;
   } catch {
-    console.warn('Parse failed:', trimmed.substring(0, 300));
+    console.warn('❌ Parse failed:', trimmed.substring(0, 500));
     return null;
   }
 };
