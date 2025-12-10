@@ -2,6 +2,7 @@
 
 /**
  * Unified Response Interface
+ * সব ধরনের বিশ্লেষণ ফলাফল একসাথে
  */
 export interface UnifiedResponse {
   spellingErrors: Array<{
@@ -65,7 +66,7 @@ export const extractTextFromGeminiResponse = (data: any): string | null => {
 };
 
 /**
- * Unified TOON Parser
+ * Unified TOON Parser - সব sections একসাথে parse করে
  */
 export const parseUnifiedToon = (raw: string): UnifiedResponse => {
   const result: UnifiedResponse = {
@@ -146,6 +147,12 @@ const parseSpellingLines = (lines: string[]): UnifiedResponse['spellingErrors'] 
 
 /**
  * Parse MIXING section
+ * Format:
+ * detected:true/false
+ * style:চলিত/সাধু
+ * reason:কারণ
+ * @CORRECTIONS
+ * বর্তমান|সংশোধন|টাইপ|pos
  */
 const parseMixingLines = (lines: string[]): UnifiedResponse['languageStyleMixing'] => {
   const result: UnifiedResponse['languageStyleMixing'] = { detected: false };
@@ -195,6 +202,13 @@ const parseMixingLines = (lines: string[]): UnifiedResponse['languageStyleMixing
 
 /**
  * Parse PUNCTUATION section
+ * Format:
+ * issue:সমস্যা
+ * cur:বাক্য
+ * fix:সংশোধিত
+ * exp:ব্যাখ্যা
+ * pos:0
+ * ---
  */
 const parsePunctuationLines = (lines: string[]): UnifiedResponse['punctuationIssues'] => {
   const issues: UnifiedResponse['punctuationIssues'] = [];
@@ -333,6 +347,11 @@ const parseToneLines = (lines: string[]): UnifiedResponse['toneConversions'] => 
 
 /**
  * Parse CONTENT section
+ * Format:
+ * type:লেখার ধরন
+ * desc:সংক্ষিপ্ত বর্ণনা
+ * missing:যা নেই১,যা নেই২
+ * tips:পরামর্শ১,পরামর্শ২
  */
 const parseContentLines = (lines: string[]): UnifiedResponse['contentAnalysis'] => {
   const result: NonNullable<UnifiedResponse['contentAnalysis']> = {
