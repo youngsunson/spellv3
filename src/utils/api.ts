@@ -4,6 +4,43 @@ import { parseAIResponse, extractTextFromGeminiResponse, UnifiedResponse } from 
 import { buildUnifiedPrompt, UnifiedPromptOptions } from '../prompts/unified';
 
 /**
+ * Rate limit tracking
+ */
+export const getRateLimitInfo = (): { count: number; date: string } => {
+  const today = new Date().toDateString();
+  const saved = localStorage.getItem('bhasha_mitra_requests');
+  
+  if (saved) {
+    try {
+      const data = JSON.parse(saved);
+      if (data.date === today) {
+        return { count: data.count, date: today };
+      }
+    } catch {
+      // Invalid data, reset
+    }
+  }
+  
+  return { count: 0, date: today };
+};
+
+export const incrementRequestCount = (): number => {
+  const today = new Date().toDateString();
+  const current = getRateLimitInfo();
+  
+  const newCount = current.date === today ? current.count + 1 : 1;
+  
+  localStorage.setItem('bhasha_mitra_requests', JSON.stringify({
+    date: today,
+    count: newCount
+  }));
+  
+  return newCount;
+};
+
+export const MAX_DAILY_REQUESTS = 18; // Safe limit (out of 20)
+
+/**
  * একটি মাত্র API call - সব বিশ্লেষণ একসাথে
  */
 export const analyzeText = async (
@@ -36,16 +73,19 @@ export const analyzeText = async (
   if (!response.ok) {
     const status = response.status;
     const messages: Record<number, string> = {
-      401: 'API Key ভুল বা মেয়াদ উত্তীর্ণ।',
-      403: 'API অনুমতি নেই। Key চেক করুন।',
-      404: `মডেল (${selectedModel}) পাওয়া যায়নি। সেটিংস চেক করুন।`,
-      429: 'Rate limit! ১ মিনিট পর চেষ্টা করুন।',
-      500: 'Gemini সার্ভারে সমস্যা। পরে চেষ্টা করুন।',
-      503: 'Gemini সার্ভার ব্যস্ত। পরে চেষ্টা করুন।'
+      400: 'রিকুয়েস্ট ফরম্যাট সঠিক নয় বা টেক্সট অনেক বেশি বড়।',
+      401: 'API Key ভুল বা মেয়াদ উত্তীর্ণ। সেটিংস চেক করুন।',
+      403: 'API অনুমতি নেই। API Key চেক করুন।',
+      404: `মডেল "${selectedModel}" পাওয়া যায়নি। সেটিংস থেকে সঠিক মডেল বেছে নিন।`,
+      429: 'Rate limit! দৈনিক সীমা শেষ। কাল আবার চেষ্টা করুন অথবা কিছুক্ষণ পর।',
+      500: 'Gemini সার্ভারে সমস্যা। কিছুক্ষণ পর আবার চেষ্টা করুন।',
+      503: 'Gemini সার্ভার ব্যস্ত। কিছুক্ষণ পর চেষ্টা করুন।'
     };
+    
     const bodyText = await response.text().catch(() => '');
     console.error('API Error:', status, bodyText);
-    throw new Error(messages[status] || `API ত্রুটি: ${status}`);
+    
+    throw new Error(messages[status] || `API ত্রুটি (স্ট্যাটাস: ${status})`);
   }
 
   const data = await response.json();
