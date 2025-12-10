@@ -2,6 +2,9 @@
 
 import { DocType, DOC_TYPE_CONFIG } from './core';
 
+/**
+ * Unified Prompt Options Interface
+ */
 export interface UnifiedPromptOptions {
   text: string;
   docType: DocType;
@@ -9,6 +12,9 @@ export interface UnifiedPromptOptions {
   tone?: string;
 }
 
+/**
+ * Tone Descriptions for prompt
+ */
 const toneDescriptions: Record<string, string> = {
   'formal': 'আনুষ্ঠানিক - আপনি/আপনার ব্যবহার করুন',
   'informal': 'অনানুষ্ঠানিক - তুমি/তোমার ব্যবহার করুন',
@@ -22,6 +28,7 @@ const toneDescriptions: Record<string, string> = {
 
 /**
  * সব কিছু একটি prompt-এ - একটি মাত্র API call
+ * TOON (Token-Oriented Object Notation) ফরম্যাটে আউটপুট
  */
 export const buildUnifiedPrompt = (options: UnifiedPromptOptions): string => {
   const { text, docType, style, tone } = options;
@@ -52,7 +59,7 @@ export const buildUnifiedPrompt = (options: UnifiedPromptOptions): string => {
 type:লেখার ধরন
 desc:সংক্ষিপ্ত বর্ণনা
 missing:যা নেই১,যা নেই২
-tips:পরামর্শ১,পরামর্শ২`;
+tips:পরামর্���১,পরামর্শ২`;
 
   return `আপনি একজন দক্ষ বাংলা প্রুফরিডার।
 ${docCfg.mainHint}
