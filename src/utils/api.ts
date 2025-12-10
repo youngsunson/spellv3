@@ -4,41 +4,117 @@ import { parseAIResponse, extractTextFromGeminiResponse, UnifiedResponse } from 
 import { buildUnifiedPrompt, UnifiedPromptOptions } from '../prompts/unified';
 
 /**
- * Rate limit tracking
+ * মডেল অনুযায়ী Rate Limits (Free Tier)
+ * সূত্র: https://ai.google.dev/pricing
  */
-export const getRateLimitInfo = (): { count: number; date: string } => {
+export const MODEL_LIMITS: Record<string, { rpm: number; rpd: number; tpm: number }> = {
+  'gemini-2.5-flash': { rpm: 5, rpd: 20, tpm: 250000 },
+  'gemini-2.5-flash-lite': { rpm: 10, rpd: 20, tpm: 250000 },
+  'gemini-2.0-flash': { rpm: 15, rpd: 1500, tpm: 1000000 },
+  // Default fallback
+  'default': { rpm: 5, rpd: 20, tpm: 250000 }
+};
+
+/**
+ * Safe limit (90% of actual to avoid hitting exact limit)
+ */
+export const getSafeLimit = (model: string): number => {
+  const limits = MODEL_LIMITS[model] || MODEL_LIMITS['default'];
+  return Math.floor(limits.rpd * 0.9);
+};
+
+/**
+ * Rate limit info interface
+ */
+export interface RateLimitInfo {
+  model: string;
+  count: number;
+  date: string;
+  limit: number;
+  remaining: number;
+  isLimited: boolean;
+}
+
+/**
+ * Get rate limit info for a specific model
+ */
+export const getRateLimitInfo = (model: string): RateLimitInfo => {
   const today = new Date().toDateString();
-  const saved = localStorage.getItem('bhasha_mitra_requests');
+  const storageKey = `bhasha_mitra_requests_${model}`;
+  const limit = getSafeLimit(model);
+  
+  let count = 0;
+  const saved = localStorage.getItem(storageKey);
   
   if (saved) {
     try {
       const data = JSON.parse(saved);
       if (data.date === today) {
-        return { count: data.count, date: today };
+        count = data.count;
       }
     } catch {
       // Invalid data, reset
     }
   }
   
-  return { count: 0, date: today };
+  return {
+    model,
+    count,
+    date: today,
+    limit,
+    remaining: Math.max(0, limit - count),
+    isLimited: count >= limit
+  };
 };
 
-export const incrementRequestCount = (): number => {
+/**
+ * Increment request count for a model
+ */
+export const incrementRequestCount = (model: string): RateLimitInfo => {
   const today = new Date().toDateString();
-  const current = getRateLimitInfo();
+  const storageKey = `bhasha_mitra_requests_${model}`;
+  const current = getRateLimitInfo(model);
   
   const newCount = current.date === today ? current.count + 1 : 1;
   
-  localStorage.setItem('bhasha_mitra_requests', JSON.stringify({
+  localStorage.setItem(storageKey, JSON.stringify({
     date: today,
     count: newCount
   }));
   
-  return newCount;
+  const limit = getSafeLimit(model);
+  
+  return {
+    model,
+    count: newCount,
+    date: today,
+    limit,
+    remaining: Math.max(0, limit - newCount),
+    isLimited: newCount >= limit
+  };
 };
 
-export const MAX_DAILY_REQUESTS = 18; // Safe limit (out of 20)
+/**
+ * Get all models' rate limit info
+ */
+export const getAllRateLimits = (): Record<string, RateLimitInfo> => {
+  const models = Object.keys(MODEL_LIMITS).filter(m => m !== 'default');
+  const result: Record<string, RateLimitInfo> = {};
+  
+  for (const model of models) {
+    result[model] = getRateLimitInfo(model);
+  }
+  
+  return result;
+};
+
+/**
+ * Reset rate limit for a model (for testing)
+ */
+export const resetRateLimit = (model: string): void => {
+  const storageKey = `bhasha_mitra_requests_${model}`;
+  localStorage.removeItem(storageKey);
+};
 
 /**
  * একটি মাত্র API call - সব বিশ্লেষণ একসাথে
@@ -48,6 +124,12 @@ export const analyzeText = async (
   apiKey: string,
   selectedModel: string
 ): Promise<UnifiedResponse | null> => {
+  // Pre-check rate limit
+  const rateLimitInfo = getRateLimitInfo(selectedModel);
+  if (rateLimitInfo.isLimited) {
+    throw new Error(`দৈনিক সীমা (${rateLimitInfo.limit}টি) শেষ। কাল আবার চেষ্টা করুন বা অন্য মডেল ব্যবহার করুন।`);
+  }
+
   const prompt = buildUnifiedPrompt(options);
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`;
 
@@ -72,12 +154,25 @@ export const analyzeText = async (
 
   if (!response.ok) {
     const status = response.status;
+    
+    // 429 = Rate limited by API
+    if (status === 429) {
+      // Mark as limited even if our count is lower
+      const storageKey = `bhasha_mitra_requests_${selectedModel}`;
+      const limit = getSafeLimit(selectedModel);
+      localStorage.setItem(storageKey, JSON.stringify({
+        date: new Date().toDateString(),
+        count: limit // Set to max
+      }));
+      
+      throw new Error('Rate limit! Google এর দৈনিক সীমা শেষ। কাল আবার চেষ্টা করুন অথবা অন্য মডেল ব্যবহার করুন।');
+    }
+    
     const messages: Record<number, string> = {
       400: 'রিকুয়েস্ট ফরম্যাট সঠিক নয় বা টেক্সট অনেক বেশি বড়।',
       401: 'API Key ভুল বা মেয়াদ উত্তীর্ণ। সেটিংস চেক করুন।',
       403: 'API অনুমতি নেই। API Key চেক করুন।',
       404: `মডেল "${selectedModel}" পাওয়া যায়নি। সেটিংস থেকে সঠিক মডেল বেছে নিন।`,
-      429: 'Rate limit! দৈনিক সীমা শেষ। কাল আবার চেষ্টা করুন অথবা কিছুক্ষণ পর।',
       500: 'Gemini সার্ভারে সমস্যা। কিছুক্ষণ পর আবার চেষ্টা করুন।',
       503: 'Gemini সার্ভার ব্যস্ত। কিছুক্ষণ পর চেষ্টা করুন।'
     };
